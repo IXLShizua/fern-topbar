@@ -157,7 +157,7 @@ impl Backend {
                     Ok(Err(error)) => {
                         tracing::debug!(%error, "cannot start tray service");
 
-                        Err(crate::dbus::availability_from_error(&error))
+                        Err(crate::backend::dbus::availability_from_error(&error))
                     }
                     Err(_) => Err(Availability::Failed(ProbeError::Timeout)),
                 };
@@ -578,7 +578,7 @@ mod dbus {
 
     impl TrayBus {
         pub async fn connect(events: &UnboundedSender<DriverEvent>) -> zbus::Result<Self> {
-            let connection = crate::dbus::service_session().await?;
+            let connection = crate::backend::dbus::service_session().await?;
             let owned_items = RegisteredItems::default();
             let host_name = format!("org.freedesktop.StatusNotifierHost-{}", std::process::id());
             let bus = Self {
@@ -1837,7 +1837,7 @@ mod dbus {
 
         #[tokio::test(flavor = "multi_thread")]
         async fn hosts_items_and_dispatches_dbusmenu_clicks() {
-            let bus = crate::dbus::tests::Bus::new().await;
+            let bus = crate::backend::dbus::tests::Bus::new().await;
             let publisher = crate::features::availability::AvailabilityPublisher::default();
             let mut readiness = publisher.subscribe();
             let mut backend = Backend::start(publisher);

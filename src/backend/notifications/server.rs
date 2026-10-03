@@ -79,8 +79,10 @@ enum Command {
 
 mod dbus {
     use super::{Availability, AvailabilityPublisher, Command, Event, Notification, Urgency};
+    use crate::backend::dbus::{
+        ServiceChanges, availability_from_error, probe, service_session, session,
+    };
     use crate::backend::notifications::ATTENTION_HINT;
-    use crate::dbus::session;
     use std::collections::{HashMap, HashSet};
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::{Arc, Mutex};
@@ -215,15 +217,9 @@ mod dbus {
             loop {
                 let mut owners = None;
                 let result = async {
-                    let connection = crate::dbus::probe(session()).await?;
+                    let connection = probe(session()).await?;
 
-                    owners = Some(
-                        crate::dbus::probe(crate::dbus::ServiceChanges::new(
-                            &connection,
-                            SERVICE_NAME,
-                        ))
-                        .await?,
-                    );
+                    owners = Some(probe(ServiceChanges::new(&connection, SERVICE_NAME)).await?);
 
                     let driver = NotificationDriver::connect(service.clone()).await?;
 
@@ -282,15 +278,15 @@ mod dbus {
         async fn connect(service: Service) -> Result<Self, Availability> {
             use crate::features::availability::{Availability, UnavailableReason};
 
-            let connection = crate::dbus::probe(crate::dbus::service_session()).await?;
+            let connection = probe(service_session()).await?;
 
-            if !crate::dbus::probe(Self::name_available(&connection)).await? {
+            if !probe(Self::name_available(&connection)).await? {
                 return Err(Availability::Unavailable(UnavailableReason::NameOccupied));
             }
 
-            crate::dbus::probe(connection.object_server().at(OBJECT_PATH, service)).await?;
+            probe(connection.object_server().at(OBJECT_PATH, service)).await?;
 
-            let reply = crate::dbus::probe(
+            let reply = probe(
                 connection
                     .request_name_with_flags(SERVICE_NAME, RequestNameFlags::DoNotQueue.into()),
             )
@@ -316,7 +312,7 @@ mod dbus {
         async fn run(
             &self,
             commands: &mut UnboundedReceiver<Command>,
-            owners: &mut crate::dbus::ServiceChanges,
+            owners: &mut ServiceChanges,
         ) -> Result<(), Availability> {
             use crate::features::availability::{Availability, UnavailableReason};
 
@@ -329,13 +325,13 @@ mod dbus {
 
                         if let Err(error) = self.emit(command).await {
                             tracing::debug!(%error, "cannot emit notification signal");
-                            return Err(crate::dbus::availability_from_error(&error));
+                            return Err(availability_from_error(&error));
                         }
                     }
                     changed = owners.changed() => {
-                        changed.map_err(|error| crate::dbus::availability_from_error(&error))?;
+                        changed.map_err(|error| availability_from_error(&error))?;
 
-                        let owner = crate::dbus::probe(async {
+                        let owner = probe(async {
                             zbus::fdo::DBusProxy::new(&self.connection).await?
                                 .get_name_owner(SERVICE_NAME.try_into()?).await.map_err(zbus::Error::from)
                         }).await?;
@@ -451,6 +447,7 @@ mod dbus {
 #[cfg(test)]
 mod lifecycle_tests {
     use super::*;
+    use crate::backend::dbus::service_session;
     use crate::features::availability::{UnavailableReason, tests::wait_for};
     use futures_util::StreamExt;
 
@@ -484,7 +481,7 @@ mod lifecycle_tests {
 
     #[tokio::test]
     async fn waits_for_another_server_then_serves_replaces_and_closes_notifications() {
-        let mut bus = crate::dbus::tests::Bus::new().await;
+        let mut bus = crate::backend::dbus::tests::Bus::new().await;
         let competitor = bus.connect().await;
 
         competitor
@@ -559,7 +556,7 @@ mod lifecycle_tests {
         drop(controls);
         drop(backend);
 
-        let connection = crate::dbus::service_session().await.unwrap();
+        let connection = service_session().await.unwrap();
 
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
             while zbus::fdo::DBusProxy::new(&connection)

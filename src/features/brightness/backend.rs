@@ -1,7 +1,7 @@
 use crate::backend::reconnect::ReconnectBackoff;
 use crate::runtime::Task;
 use crate::{
-    dbus::ServiceChanges,
+    backend::dbus::{self, ServiceChanges, probe},
     features::availability::{Availability, AvailabilityPublisher, UnavailableReason},
 };
 use std::future::pending;
@@ -96,12 +96,11 @@ impl BrightnessDriver {
             }
 
             if owners.is_none()
-                && let Ok(connection) = crate::dbus::probe(crate::dbus::system()).await
+                && let Ok(connection) = probe(dbus::system()).await
             {
-                owners =
-                    crate::dbus::probe(ServiceChanges::new(&connection, "org.freedesktop.login1"))
-                        .await
-                        .ok();
+                owners = probe(ServiceChanges::new(&connection, "org.freedesktop.login1"))
+                    .await
+                    .ok();
             }
 
             if !self.refresh().await {
@@ -158,7 +157,7 @@ impl BrightnessDriver {
             };
             let current = device.read()?;
 
-            crate::dbus::probe(system::login_available()).await?;
+            probe(system::login_available()).await?;
 
             Ok(current)
         }
@@ -204,7 +203,7 @@ impl BrightnessDriver {
         }
         .clamp(1, 100);
 
-        let result = crate::dbus::probe(device.set_percent(percent)).await;
+        let result = probe(device.set_percent(percent)).await;
 
         if let Err(error) = result {
             tracing::warn!(state = ?error, "cannot set brightness");
@@ -214,7 +213,7 @@ impl BrightnessDriver {
 
 mod system {
     use super::{Availability, Brightness, UnavailableReason};
-    use crate::{dbus, features::availability::ProbeError};
+    use crate::{backend::dbus, features::availability::ProbeError};
     use std::fs;
     use std::io;
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};

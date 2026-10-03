@@ -207,8 +207,8 @@ impl Host {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::dbus::tests::Bus;
     use crate::backend::notifications::{Notification, Urgency, server::Backend};
-    use crate::dbus::tests::Bus;
 
     #[gtk::test]
     fn notifications_popup_hides_and_restores_desktop_previews() {

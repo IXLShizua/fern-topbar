@@ -9,7 +9,7 @@ pub use model::{
 };
 
 use crate::{
-    dbus::{ServiceChanges, system},
+    backend::dbus::{ServiceChanges, availability_from_error, probe, system},
     runtime::Task,
 };
 use futures_util::{FutureExt, StreamExt};
@@ -121,13 +121,11 @@ impl Backend {
         loop {
             let mut owners = None;
             let result = async {
-                let connection = crate::dbus::probe(system()).await?;
+                let connection = probe(system()).await?;
 
-                owners = Some(
-                    crate::dbus::probe(ServiceChanges::new(&connection, dbus::SERVICE)).await?,
-                );
+                owners = Some(probe(ServiceChanges::new(&connection, dbus::SERVICE)).await?);
 
-                let client = crate::dbus::probe(dbus::Client::new(connection)).await?;
+                let client = probe(dbus::Client::new(connection)).await?;
 
                 Self::listen(
                     &client,
@@ -192,7 +190,7 @@ impl Backend {
         events: &mpsc::UnboundedSender<Event>,
         availability: &AvailabilityPublisher,
     ) -> Result<(), Availability> {
-        let snapshot = crate::dbus::probe(client.snapshot()).await?;
+        let snapshot = probe(client.snapshot()).await?;
 
         availability.set(if snapshot.wifi_available || snapshot.wired_available {
             Availability::Available
@@ -213,7 +211,7 @@ impl Backend {
         availability: &AvailabilityPublisher,
         retry: &mut ReconnectBackoff,
     ) -> Result<(), Availability> {
-        let mut changes = crate::dbus::probe(client.changes()).await?;
+        let mut changes = probe(client.changes()).await?;
 
         Self::publish_snapshot(client, events, availability).await?;
         retry.reset();
@@ -251,10 +249,10 @@ impl Backend {
                 }
                 _ = events.closed() => return Ok(()),
                 change = changes.next() => {
-                    change.ok_or_else(closed)?.map_err(|error| crate::dbus::availability_from_error(&error))?;
+                    change.ok_or_else(closed)?.map_err(|error| availability_from_error(&error))?;
 
                     while let Some(change) = changes.next().now_or_never() {
-                        change.ok_or_else(closed)?.map_err(|error| crate::dbus::availability_from_error(&error))?;
+                        change.ok_or_else(closed)?.map_err(|error| availability_from_error(&error))?;
                     }
 
                     Self::publish_snapshot(client, events, availability).await?;

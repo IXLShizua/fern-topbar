@@ -1,7 +1,7 @@
 //! Sends application notifications to whichever desktop notification server is active.
 
 use super::{ATTENTION_HINT, Urgency};
-use crate::dbus;
+use crate::backend::dbus;
 use futures_util::StreamExt;
 use snafu::Snafu;
 use std::collections::HashMap;

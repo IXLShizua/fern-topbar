@@ -307,8 +307,8 @@ impl AlertDriver {
 mod tests {
     use super::*;
     use crate::{
+        backend::dbus,
         backend::notifications::{Event, Urgency, server::Backend},
-        dbus,
         features::availability::{Availability, AvailabilityPublisher, tests::wait_for},
     };
     use std::time::Duration;

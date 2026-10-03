@@ -1,7 +1,7 @@
 use crate::backend::reconnect::ReconnectBackoff;
 use crate::features::availability::{self, Availability, AvailabilityPublisher, UnavailableReason};
 use crate::{
-    dbus::{ServiceChanges, system},
+    backend::dbus::{ServiceChanges, availability_from_error, probe, system},
     runtime::Task,
 };
 use tokio::sync::watch;
@@ -98,17 +98,15 @@ impl BatteryDriver {
         while !self.events.is_closed() {
             let mut owners = None;
             let result = async {
-                let connection = crate::dbus::probe(system()).await?;
+                let connection = probe(system()).await?;
 
-                owners = Some(
-                    crate::dbus::probe(ServiceChanges::new(&connection, "org.freedesktop.UPower"))
-                        .await?,
-                );
+                owners =
+                    Some(probe(ServiceChanges::new(&connection, "org.freedesktop.UPower")).await?);
 
                 tokio::select! {
                     result = dbus::run(&connection, &self.events, &self.availability) => result,
                     changed = owners.as_mut().unwrap().changed() => {
-                        changed.map_err(|error| crate::dbus::availability_from_error(&error))?;
+                        changed.map_err(|error| availability_from_error(&error))?;
                         retry.reset();
 
                         Err(Availability::Unavailable(UnavailableReason::ServiceMissing))
@@ -164,6 +162,7 @@ fn publish(events: &watch::Sender<Option<Battery>>, battery: Option<Battery>) {
 
 mod dbus {
     use super::{Battery, PowerState, WarningLevel, publish};
+    use crate::backend::dbus::probe;
     use crate::features::availability::{
         Availability, AvailabilityPublisher, PROBE_TIMEOUT, ProbeError, UnavailableReason,
     };
@@ -209,7 +208,7 @@ mod dbus {
         events: &watch::Sender<Option<Battery>>,
         availability: &AvailabilityPublisher,
     ) -> Result<bool, Availability> {
-        let mut session = crate::dbus::probe(BatterySession::connect(connection)).await?;
+        let mut session = probe(BatterySession::connect(connection)).await?;
         session.run(events, availability).await
     }
 
@@ -274,7 +273,7 @@ mod dbus {
             );
 
             loop {
-                let battery = crate::dbus::probe(self.snapshot()).await?;
+                let battery = probe(self.snapshot()).await?;
 
                 availability.set(if battery.is_some() {
                     Availability::Available
@@ -388,7 +387,7 @@ mod tests {
 
     #[tokio::test]
     async fn appears_after_startup_tracks_hotplug_and_recovers_service_ownership() {
-        let bus = crate::dbus::tests::Bus::new().await;
+        let bus = crate::backend::dbus::tests::Bus::new().await;
         let publisher = AvailabilityPublisher::default();
         let mut readiness = publisher.subscribe();
         let backend = Backend::start(publisher);

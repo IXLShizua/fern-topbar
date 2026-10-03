@@ -1,3 +1,5 @@
+//! Shared D-Bus connections, service ownership subscriptions and readiness probes.
+
 use crate::features::availability::{self, Availability, ProbeError, UnavailableReason};
 use futures_util::{StreamExt, stream::BoxStream};
 use tokio::sync::Mutex;

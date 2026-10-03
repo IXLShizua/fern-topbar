@@ -780,7 +780,7 @@ mod tests {
     use super::super::{Backend, Event};
     use super::*;
     use crate::backend::reconnect::ReconnectBackoff;
-    use crate::{dbus::ServiceChanges, features::availability::AvailabilityPublisher};
+    use crate::{backend::dbus::ServiceChanges, features::availability::AvailabilityPublisher};
     use std::{
         collections::HashMap,
         sync::{
@@ -1098,7 +1098,7 @@ mod tests {
             Availability, AvailabilityPublisher, UnavailableReason, tests::wait_for,
         };
 
-        let bus = crate::dbus::tests::Bus::new().await;
+        let bus = crate::backend::dbus::tests::Bus::new().await;
         let publisher = AvailabilityPublisher::default();
         let mut readiness = publisher.subscribe();
         let (backend, _events) = Backend::start(publisher);
@@ -1176,7 +1176,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn scans_reads_profiles_and_dispatches_operations_on_a_private_bus() {
-        let bus = crate::dbus::tests::Bus::new().await;
+        let bus = crate::backend::dbus::tests::Bus::new().await;
 
         let calls = Arc::new(Mutex::new(Calls {
             wifi_enabled: true,

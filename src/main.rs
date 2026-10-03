@@ -2,7 +2,6 @@ mod alerts;
 mod app;
 mod backend;
 mod config;
-mod dbus;
 mod features;
 mod logging;
 mod runtime;

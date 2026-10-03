@@ -293,7 +293,7 @@ mod tests {
 
     #[tokio::test]
     async fn warnings_work_without_widgets_and_respect_external_server_dismissals() {
-        let bus = crate::dbus::tests::Bus::new().await;
+        let bus = crate::backend::dbus::tests::Bus::new().await;
         let (updates, receiver) = watch::channel(Some(battery(WarningLevel::Low, 15, true)));
         let alerts = crate::alerts::service::AlertService::start();
         let worker =
