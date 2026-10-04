@@ -463,7 +463,7 @@ mod tests {
         use crate::features::availability::tests::wait_for;
 
         let directory =
-            std::env::temp_dir().join(format!("topbar-niri-readiness-{}", std::process::id()));
+            std::env::temp_dir().join(format!("fern-topbar-niri-readiness-{}", std::process::id()));
 
         fs::create_dir_all(&directory).unwrap();
 
@@ -538,7 +538,7 @@ mod tests {
     #[tokio::test]
     async fn reuses_the_command_connection_and_keeps_it_after_action_errors() {
         let directory =
-            std::env::temp_dir().join(format!("topbar-niri-commands-{}", std::process::id()));
+            std::env::temp_dir().join(format!("fern-topbar-niri-commands-{}", std::process::id()));
 
         fs::create_dir_all(&directory).unwrap();
 
@@ -611,7 +611,7 @@ mod tests {
     #[tokio::test]
     async fn reconnects_the_command_writer_when_the_socket_is_replaced() {
         let directory =
-            std::env::temp_dir().join(format!("topbar-niri-writer-{}", std::process::id()));
+            std::env::temp_dir().join(format!("fern-topbar-niri-writer-{}", std::process::id()));
 
         fs::create_dir_all(&directory).unwrap();
 
@@ -689,8 +689,10 @@ mod tests {
 
     #[tokio::test]
     async fn connects_after_an_initial_connection_failure() {
-        let directory =
-            std::env::temp_dir().join(format!("topbar-niri-writer-start-{}", std::process::id()));
+        let directory = std::env::temp_dir().join(format!(
+            "fern-topbar-niri-writer-start-{}",
+            std::process::id()
+        ));
 
         fs::create_dir_all(&directory).unwrap();
 
@@ -736,8 +738,10 @@ mod tests {
 
     #[tokio::test]
     async fn reconnects_the_event_reader_after_eof_without_replacing_the_socket() {
-        let directory =
-            std::env::temp_dir().join(format!("topbar-niri-reader-eof-{}", std::process::id()));
+        let directory = std::env::temp_dir().join(format!(
+            "fern-topbar-niri-reader-eof-{}",
+            std::process::id()
+        ));
 
         fs::create_dir_all(&directory).unwrap();
 
@@ -803,8 +807,10 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_an_unsuccessful_event_subscription() {
-        let directory =
-            std::env::temp_dir().join(format!("topbar-niri-reader-reject-{}", std::process::id()));
+        let directory = std::env::temp_dir().join(format!(
+            "fern-topbar-niri-reader-reject-{}",
+            std::process::id()
+        ));
 
         fs::create_dir_all(&directory).unwrap();
 
@@ -845,8 +851,10 @@ mod tests {
 
     #[tokio::test]
     async fn stops_while_waiting_for_the_event_subscription_reply() {
-        let directory =
-            std::env::temp_dir().join(format!("topbar-niri-reader-stop-{}", std::process::id()));
+        let directory = std::env::temp_dir().join(format!(
+            "fern-topbar-niri-reader-stop-{}",
+            std::process::id()
+        ));
 
         fs::create_dir_all(&directory).unwrap();
 
@@ -879,7 +887,8 @@ mod tests {
 
     #[tokio::test]
     async fn reconnects_when_the_socket_is_replaced_and_stops_when_unused() {
-        let directory = std::env::temp_dir().join(format!("topbar-niri-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("fern-topbar-niri-{}", std::process::id()));
 
         fs::create_dir_all(&directory).unwrap();
 

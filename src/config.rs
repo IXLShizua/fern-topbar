@@ -194,7 +194,7 @@ pub fn load() -> Result<Settings, String> {
         Ok(contents) => contents,
         Err(error)
             if error.kind() == std::io::ErrorKind::NotFound
-                && env::var_os("TOPBAR_CONFIG").is_none() =>
+                && env::var_os("FERN_TOPBAR_CONFIG").is_none() =>
         {
             return Config::default().into_settings();
         }
@@ -210,15 +210,15 @@ pub fn load() -> Result<Settings, String> {
 }
 
 fn path() -> PathBuf {
-    if let Some(path) = env::var_os("TOPBAR_CONFIG") {
+    if let Some(path) = env::var_os("FERN_TOPBAR_CONFIG") {
         return PathBuf::from(path);
     }
 
-    if let Some(directory) = env::var_os("XDG_CONFIG_HOME") {
-        return PathBuf::from(directory).join("topbar/config.json");
-    }
+    let directory = env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env::var_os("HOME").unwrap_or_default()).join(".config"));
 
-    PathBuf::from(env::var_os("HOME").unwrap_or_default()).join(".config/topbar/config.json")
+    directory.join("fern-topbar/config.json")
 }
 
 #[cfg(test)]

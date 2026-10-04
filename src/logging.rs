@@ -12,7 +12,7 @@ pub fn load() {
         .parse_lossy(
             std::env::var("RUST_LOG")
                 .as_deref()
-                .unwrap_or("warn,topbar=info"),
+                .unwrap_or("warn,fern_topbar=info"),
         );
 
     tracing_subscriber::fmt()
@@ -101,7 +101,7 @@ mod tests {
             let output = LogBuffer::default();
             let writer = output.clone();
             let subscriber = tracing_subscriber::fmt()
-                .with_env_filter(EnvFilter::new("warn,topbar=info"))
+                .with_env_filter(EnvFilter::new("warn,fern_topbar=info"))
                 .with_ansi(ansi)
                 .event_format(LogFormat)
                 .with_writer(move || writer.clone())

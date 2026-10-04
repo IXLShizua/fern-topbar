@@ -250,7 +250,7 @@ fn start_application_runtime(settings: config::Settings) -> Result<ui::PanelInit
 }
 
 fn launch_graphical_interface(init: ui::PanelInit) {
-    let app = RelmApp::new("com.example.Topbar");
+    let app = RelmApp::new("com.example.FernTopbar");
 
     relm4_icons::initialize_icons(
         ui::icon_names::GRESOURCE_BYTES,

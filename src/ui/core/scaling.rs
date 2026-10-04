@@ -194,7 +194,7 @@ mod imp {
 
     #[glib::object_subclass]
     impl ObjectSubclass for Scaled {
-        const NAME: &'static str = "TopbarScaled";
+        const NAME: &'static str = "FernTopbarScaled";
         type Type = ScaledWidget;
         type ParentType = gtk::Widget;
     }

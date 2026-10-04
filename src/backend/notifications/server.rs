@@ -121,7 +121,12 @@ mod dbus {
         }
 
         fn get_server_information(&self) -> (&str, &str, &str, &str) {
-            ("Topbar", "Topbar", env!("CARGO_PKG_VERSION"), "1.2")
+            (
+                "fern-topbar",
+                "fern-topbar",
+                env!("CARGO_PKG_VERSION"),
+                "1.2",
+            )
         }
 
         #[allow(

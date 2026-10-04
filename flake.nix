@@ -1,5 +1,5 @@
 {
-  description = "Topbar GTK panel with Niri integration";
+  description = "fern-topbar GTK panel with Niri integration";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -78,7 +78,7 @@
 
           cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
-          topbar = craneLib.buildPackage (
+          fernTopbar = craneLib.buildPackage (
             commonArgs
             // {
               inherit cargoArtifacts;
@@ -86,12 +86,12 @@
               doCheck = false;
 
               postInstall = ''
-                install -Dm644 LICENSE "$out/share/licenses/topbar/LICENSE"
+                install -Dm644 LICENSE "$out/share/licenses/fern-topbar/LICENSE"
               '';
 
               meta = {
                 description = "Configurable GTK panel with Niri integration";
-                mainProgram = "topbar";
+                mainProgram = "fern-topbar";
                 license = pkgs.lib.licenses.gpl3Plus;
                 platforms = [
                   "x86_64-linux"
@@ -102,18 +102,18 @@
           );
         in
         {
-          packages.default = topbar;
+          packages.default = fernTopbar;
 
           apps.default =
             flake-utils.lib.mkApp {
-              drv = topbar;
+              drv = fernTopbar;
             }
             // {
-              inherit (topbar) meta;
+              inherit (fernTopbar) meta;
             };
 
           checks = {
-            package = topbar;
+            package = fernTopbar;
 
             formatting = craneLib.cargoFmt {
               inherit src;
@@ -142,7 +142,7 @@
           formatter = pkgs.nixfmt;
 
           devShells.default = craneLib.devShell {
-            inputsFrom = [ topbar ];
+            inputsFrom = [ fernTopbar ];
           };
         }
       );

@@ -98,7 +98,7 @@ impl Component for Panel {
     view! {
         #[root]
         panel = gtk::ApplicationWindow {
-            set_title: Some("Topbar"),
+            set_title: Some("fern-topbar"),
             set_decorated: false,
             set_default_height: PANEL_HEIGHT,
             add_css_class: "topbar-panel",
@@ -594,7 +594,7 @@ impl Animation {
 /// Logs an error and quits the application if layer-shell is unavailable.
 fn ensure_layer_shell_support() {
     if !gtk4_layer_shell::is_supported() {
-        tracing::error!("topbar requires a Wayland compositor with layer-shell support");
+        tracing::error!("fern-topbar requires a Wayland compositor with layer-shell support");
         relm4::main_application().quit();
     }
 }
@@ -649,7 +649,7 @@ fn configure_panel_window(panel: &gtk::ApplicationWindow) {
     panel.set_anchor(Edge::Right, true);
     panel.set_exclusive_zone(0);
     panel.set_keyboard_mode(KeyboardMode::None);
-    panel.set_namespace(Some("topbar"));
+    panel.set_namespace(Some("fern-topbar"));
 }
 
 /// Keeps content width synchronized when the fixed animation canvas is allocated.
@@ -853,7 +853,7 @@ mod dismissal_tests {
         height: u32,
     ) {
         // Niri's nested X11 output is vertically flipped, including absolute input.
-        let y = if std::env::var_os("TOPBAR_TEST_FLIP_Y").is_some() {
+        let y = if std::env::var_os("FERN_TOPBAR_TEST_FLIP_Y").is_some() {
             height.saturating_sub(y)
         } else {
             y
@@ -897,7 +897,7 @@ mod dismissal_tests {
     #[gtk::test]
     #[ignore = "requires isolated niri, virtual-pointer and wtype; changes overview and input focus"]
     fn outside_click_reaches_its_target_and_dismisses_panel_and_menu() {
-        let scale = std::env::var("TOPBAR_TEST_SCALE")
+        let scale = std::env::var("FERN_TOPBAR_TEST_SCALE")
             .map(|value| UiScale::new(value.parse().unwrap()).unwrap())
             .unwrap_or_default();
 
@@ -1115,7 +1115,7 @@ mod dismissal_tests {
             if open_menu {
                 assert!(menu.widget().is_mapped());
 
-                if let Ok(path) = std::env::var("TOPBAR_TEST_PREVIEW") {
+                if let Ok(path) = std::env::var("FERN_TOPBAR_TEST_PREVIEW") {
                     let snapshot = gtk::Snapshot::new();
                     let paintable = gtk::WidgetPaintable::new(Some(menu.widget()));
                     paintable.snapshot(

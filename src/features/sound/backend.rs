@@ -293,7 +293,7 @@ mod pulse {
                 return Err(Availability::Failed(ProbeError::Connect));
             };
 
-            let Some(mut context) = Context::new(&mainloop, "Topbar") else {
+            let Some(mut context) = Context::new(&mainloop, "fern-topbar") else {
                 tracing::warn!("cannot create audio context");
                 return Err(Availability::Failed(ProbeError::Connect));
             };

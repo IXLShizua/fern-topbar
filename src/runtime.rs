@@ -11,7 +11,7 @@ fn shared() -> &'static Runtime {
     RUNTIME.get_or_init(|| {
         Builder::new_multi_thread()
             .enable_all()
-            .thread_name("tokio-rt-topbar-pool")
+            .thread_name("tokio-rt-fern-topbar-pool")
             .build()
             .expect("failed to create the async runtime")
     })

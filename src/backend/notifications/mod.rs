@@ -3,9 +3,9 @@
 pub mod client;
 pub mod server;
 
-/// A private hint lets explicit alert shows resurface retained topbar previews.
+/// A private hint lets explicit alert shows resurface retained fern-topbar previews.
 /// Other desktop notification servers may ignore it under the standard protocol.
-pub const ATTENTION_HINT: &str = "x-topbar-request-attention";
+pub const ATTENTION_HINT: &str = "x-fern-topbar-request-attention";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]

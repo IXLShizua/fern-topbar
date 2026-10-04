@@ -429,7 +429,7 @@ mod system {
         #[test]
         fn distinguishes_missing_backlight_from_malformed_data_and_recovers_after_hotplug() {
             let root =
-                std::env::temp_dir().join(format!("topbar-backlight-{}", std::process::id()));
+                std::env::temp_dir().join(format!("fern-topbar-backlight-{}", std::process::id()));
 
             assert!(BacklightDevice::discover_at(&root).unwrap().is_none());
 

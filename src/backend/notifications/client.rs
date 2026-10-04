@@ -108,7 +108,16 @@ impl NotificationClient {
         let timeout = if urgency == Urgency::Critical { 0 } else { -1 };
 
         self.proxy
-            .notify("Topbar", replaces, icon, summary, body, &[], hints, timeout)
+            .notify(
+                "fern-topbar",
+                replaces,
+                icon,
+                summary,
+                body,
+                &[],
+                hints,
+                timeout,
+            )
             .await
             .map_err(|error| {
                 tracing::warn!(%error, "cannot send application notification");

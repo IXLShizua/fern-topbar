@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     relm4_icons_build::bundle_icons(
         "icon_names.rs",
-        Some("com.example.Topbar"),
+        Some("com.example.FernTopbar"),
         None::<&str>,
         None::<&str>,
         [

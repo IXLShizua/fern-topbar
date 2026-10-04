@@ -70,7 +70,7 @@ impl SimpleComponent for PanelTrigger {
         root.set_anchor(Edge::Left, true);
         root.set_anchor(Edge::Right, true);
         root.set_exclusive_zone(0);
-        root.set_namespace(Some("topbar-trigger"));
+        root.set_namespace(Some("fern-topbar-trigger"));
         root.set_monitor(Some(&monitor));
         widgets.area.set_draw_func(|_, cr, _, _| {
             cr.set_operator(gtk::cairo::Operator::Source);

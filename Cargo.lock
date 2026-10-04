@@ -240,6 +240,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "fern-topbar"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "futures-util",
+ "gtk4-layer-shell",
+ "libc",
+ "libpulse-binding",
+ "niri-ipc",
+ "relm4",
+ "relm4-icons",
+ "relm4-icons-build",
+ "serde",
+ "serde_json",
+ "snafu",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "wayland-client",
+ "wayland-protocols-wlr",
+ "zbus",
+]
+
+[[package]]
 name = "field-offset"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1503,30 +1527,6 @@ name = "toml_writer"
 version = "1.1.2+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d56353a2a665ad0f41a421187180aab746c8c325620617ad883a99a1cbe66d2"
-
-[[package]]
-name = "topbar"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "futures-util",
- "gtk4-layer-shell",
- "libc",
- "libpulse-binding",
- "niri-ipc",
- "relm4",
- "relm4-icons",
- "relm4-icons-build",
- "serde",
- "serde_json",
- "snafu",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "wayland-client",
- "wayland-protocols-wlr",
- "zbus",
-]
 
 [[package]]
 name = "tracing"

@@ -1,4 +1,4 @@
-//! Internal topbar warnings, independent of widgets and notification transports.
+//! Internal fern-topbar warnings, independent of widgets and notification transports.
 
 pub mod battery;
 pub mod service;

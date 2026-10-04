@@ -334,7 +334,7 @@ fn configure_toast_window(root: &gtk::ApplicationWindow, scale: UiScale) {
     root.set_margin(Edge::Right, scale.pixels(12));
     root.set_exclusive_zone(0);
     root.set_keyboard_mode(KeyboardMode::None);
-    root.set_namespace(Some("topbar-notifications"));
+    root.set_namespace(Some("fern-topbar-notifications"));
 }
 
 impl Toasts {
