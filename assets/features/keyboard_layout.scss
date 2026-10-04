@@ -5,8 +5,5 @@
     color: map.get($colors, bar-text);
     background: transparent;
     border-radius: map.get($radii, control);
-    font-family: $font-family;
-    font-size: 12px;
-    font-weight: 600;
     padding: 4px 7px;
 }

@@ -100,12 +100,21 @@ window.topbar {
         border: 1px solid map.get($colors, bar-edge);
         border-radius: map.get($radii, surface);
         box-shadow: 0 3px 8px rgba(0, 0, 0, 0.25);
-        font-family: $font-family;
     }
 
     &-end {
         margin-right: map.get($spacing, 5);
     }
+}
+
+.topbar-content,
+.topbar-layout,
+.topbar-status,
+menubutton.topbar-feature-button > button,
+button.topbar-icon-button {
+    font-family: $font-family;
+    font-size: map.get($font-sizes, panel);
+    font-weight: map.get($font-weights, semibold);
 }
 
 .topbar-feature-divider {
