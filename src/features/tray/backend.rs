@@ -1,5 +1,5 @@
-use crate::backend::reconnect::ReconnectBackoff;
-use crate::features::availability::{self, Availability, AvailabilityPublisher, ProbeError};
+use crate::backend::dbus::{Service, probe};
+use crate::features::availability::{Availability, AvailabilityPublisher, ProbeError};
 use crate::runtime::{self, Task};
 use std::collections::{HashMap, HashSet};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -131,40 +131,38 @@ pub struct Backend {
 
 impl Backend {
     pub fn start(availability: AvailabilityPublisher) -> Self {
-        let (command_sender, commands) = mpsc::unbounded_channel();
+        let (command_sender, mut commands) = mpsc::unbounded_channel();
         let (item_events, items) = mpsc::unbounded_channel();
         let task = Task::spawn(async move {
-            let mut commands = commands;
-            let mut retry = ReconnectBackoff::default();
+            let mut service = Service::exported(dbus::TrayBus::host_name(), availability.clone());
 
             loop {
-                let result = match tokio::time::timeout(
-                    availability::PROBE_TIMEOUT,
-                    TrayDriver::connect(item_events.clone()),
-                )
-                .await
-                {
-                    Ok(Ok(mut driver)) => {
+                let connection = tokio::select! {
+                    connection = service.connect() => connection,
+                    _ = item_events.closed() => return,
+                    command = commands.recv() => {
+                        if command.is_none() {
+                            return;
+                        }
+
+                        continue;
+                    }
+                };
+                let result = service
+                    .run(async {
+                        let mut driver =
+                            probe(TrayDriver::connect(connection, item_events.clone())).await?;
                         availability.set(Availability::Available);
-                        retry.reset();
 
                         let result = driver.run(&mut commands).await;
-
                         driver.bus.close().await;
 
                         result
-                    }
-                    Ok(Err(error)) => {
-                        tracing::debug!(%error, "cannot start tray service");
+                    })
+                    .await;
 
-                        Err(crate::backend::dbus::availability_from_error(&error))
-                    }
-                    Err(_) => Err(Availability::Failed(ProbeError::Timeout)),
-                };
-
-                match result {
-                    Ok(()) => return,
-                    Err(state) => availability.set(state),
+                if result.is_ok() {
+                    return;
                 }
 
                 let _ = item_events.send(TrayUpdate {
@@ -174,22 +172,6 @@ impl Backend {
                     changed_titles: HashSet::new(),
                     changed_menu_rows: HashMap::new(),
                 });
-
-                let delay = tokio::time::sleep(retry.next_delay());
-
-                tokio::pin!(delay);
-
-                loop {
-                    tokio::select! {
-                        _ = item_events.closed() => return,
-                        _ = &mut delay => break,
-                        command = commands.recv() => {
-                            if command.is_none() {
-                                return;
-                            }
-                        }
-                    }
-                }
             }
         });
 
@@ -243,9 +225,12 @@ struct TrayDriver {
 }
 
 impl TrayDriver {
-    async fn connect(item_events: UnboundedSender<TrayUpdate>) -> zbus::Result<Self> {
+    async fn connect(
+        connection: zbus::Connection,
+        item_events: UnboundedSender<TrayUpdate>,
+    ) -> zbus::Result<Self> {
         let (event_sender, backend_events) = mpsc::unbounded_channel();
-        let bus = dbus::TrayBus::connect(&event_sender).await?;
+        let bus = dbus::TrayBus::connect(connection, &event_sender).await?;
         let listeners = dbus::SignalListeners::start(&bus, &event_sender);
 
         Ok(Self {
@@ -577,10 +562,16 @@ mod dbus {
     }
 
     impl TrayBus {
-        pub async fn connect(events: &UnboundedSender<DriverEvent>) -> zbus::Result<Self> {
-            let connection = crate::backend::dbus::service_session().await?;
+        pub fn host_name() -> String {
+            format!("org.freedesktop.StatusNotifierHost-{}", std::process::id())
+        }
+
+        pub async fn connect(
+            connection: Connection,
+            events: &UnboundedSender<DriverEvent>,
+        ) -> zbus::Result<Self> {
             let owned_items = RegisteredItems::default();
-            let host_name = format!("org.freedesktop.StatusNotifierHost-{}", std::process::id());
+            let host_name = Self::host_name();
             let bus = Self {
                 connection,
                 owned_items,

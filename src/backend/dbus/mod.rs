@@ -1,9 +1,18 @@
 //! Shared D-Bus connections, service ownership subscriptions and readiness probes.
 
 use crate::features::availability::{self, Availability, ProbeError, UnavailableReason};
-use futures_util::{StreamExt, stream::BoxStream};
+use futures_util::{StreamExt, TryFutureExt};
 use tokio::sync::Mutex;
-use zbus::{Connection, Error, fdo::DBusProxy};
+use zbus::{
+    Connection, Error,
+    fdo::{DBusProxy, Error as FdoError, NameOwnerChangedStream},
+    names::OwnedUniqueName,
+    proxy::{CacheProperties, SignalStream},
+};
+
+mod service;
+
+pub use service::Service;
 
 static SESSION: Mutex<Option<Connection>> = Mutex::const_new(None);
 static SYSTEM: Mutex<Option<Connection>> = Mutex::const_new(None);
@@ -50,59 +59,36 @@ async fn open_system() -> zbus::Result<Connection> {
 }
 
 /// Converts transport-specific failures into feature readiness.
-pub fn availability_from_error(error: &zbus::Error) -> Availability {
+pub fn availability_from_error(error: Error) -> Availability {
     tracing::debug!(%error, "D-Bus availability check failed");
 
-    let name = match error {
-        zbus::Error::MethodError(name, ..) => Some(name.as_str()),
-        zbus::Error::FDO(error) => match error.as_ref() {
-            zbus::fdo::Error::ServiceUnknown(_) | zbus::fdo::Error::NameHasNoOwner(_) => {
-                return Availability::Unavailable(UnavailableReason::ServiceMissing);
+    match error {
+        Error::MethodError(..) | Error::FDO(_) => match FdoError::from(error) {
+            FdoError::ServiceUnknown(_) | FdoError::NameHasNoOwner(_) => {
+                Availability::Unavailable(UnavailableReason::ServiceMissing)
             }
-            zbus::fdo::Error::AccessDenied(_) | zbus::fdo::Error::AuthFailed(_) => {
-                return Availability::Failed(ProbeError::PermissionDenied);
+            FdoError::AccessDenied(_) | FdoError::AuthFailed(_) => {
+                Availability::Failed(ProbeError::PermissionDenied)
             }
-            zbus::fdo::Error::UnknownObject(_) | zbus::fdo::Error::UnknownInterface(_) => {
-                return Availability::Unavailable(UnavailableReason::DeviceMissing);
+            FdoError::UnknownObject(_) | FdoError::UnknownInterface(_) => {
+                Availability::Unavailable(UnavailableReason::DeviceMissing)
             }
-            zbus::fdo::Error::NoReply(_) | zbus::fdo::Error::Timeout(_) => {
-                return Availability::Failed(ProbeError::Timeout);
+            FdoError::NoReply(_) | FdoError::Timeout(_) => {
+                Availability::Failed(ProbeError::Timeout)
             }
-            _ => None,
+            _ => Availability::Failed(ProbeError::Read),
         },
-        zbus::Error::NameTaken => {
-            return Availability::Unavailable(UnavailableReason::NameOccupied);
-        }
-        zbus::Error::InputOutput(error) | zbus::Error::Connection(error, _) => {
-            return Availability::Failed(match error.kind() {
+        Error::NameTaken => Availability::Unavailable(UnavailableReason::NameOccupied),
+        Error::InputOutput(error) | Error::Connection(error, _) => {
+            Availability::Failed(match error.kind() {
                 std::io::ErrorKind::PermissionDenied => ProbeError::PermissionDenied,
                 std::io::ErrorKind::TimedOut => ProbeError::Timeout,
                 _ => ProbeError::Connect,
-            });
+            })
         }
-        zbus::Error::Handshake(_) => {
-            return Availability::Failed(ProbeError::Connect);
-        }
-        zbus::Error::InvalidReply | zbus::Error::Variant(_) | zbus::Error::InvalidField => {
-            return Availability::Failed(ProbeError::Protocol);
-        }
-        _ => None,
-    };
-
-    match name {
-        Some(
-            "org.freedesktop.DBus.Error.ServiceUnknown"
-            | "org.freedesktop.DBus.Error.NameHasNoOwner",
-        ) => Availability::Unavailable(UnavailableReason::ServiceMissing),
-        Some(
-            "org.freedesktop.DBus.Error.AccessDenied" | "org.freedesktop.DBus.Error.AuthFailed",
-        ) => Availability::Failed(ProbeError::PermissionDenied),
-        Some(
-            "org.freedesktop.DBus.Error.UnknownObject"
-            | "org.freedesktop.DBus.Error.UnknownInterface",
-        ) => Availability::Unavailable(UnavailableReason::DeviceMissing),
-        Some("org.freedesktop.DBus.Error.NoReply" | "org.freedesktop.DBus.Error.Timeout") => {
-            Availability::Failed(ProbeError::Timeout)
+        Error::Handshake(_) => Availability::Failed(ProbeError::Connect),
+        Error::InvalidReply | Error::Variant(_) | Error::InvalidField => {
+            Availability::Failed(ProbeError::Protocol)
         }
         _ => Availability::Failed(ProbeError::Read),
     }
@@ -110,38 +96,62 @@ pub fn availability_from_error(error: &zbus::Error) -> Availability {
 
 /// Applies the shared probe timeout and classifies D-Bus failures at the transport boundary.
 pub async fn probe<T>(future: impl Future<Output = zbus::Result<T>>) -> Result<T, Availability> {
-    availability::probe(async {
-        future
-            .await
-            .map_err(|error| availability_from_error(&error))
-    })
-    .await
+    availability::probe(future.map_err(availability_from_error)).await
 }
 
 /// Watches service ownership changes without periodic availability probes.
-pub struct ServiceChanges {
-    changes: BoxStream<'static, zbus::Result<()>>,
+struct ServiceChanges {
+    proxy: DBusProxy<'static>,
+    owners: NameOwnerChangedStream,
+    activations: SignalStream<'static>,
+}
+
+enum ServiceChange {
+    Owner(Option<OwnedUniqueName>),
+    Activation,
 }
 
 impl ServiceChanges {
     /// Subscribes before the caller attempts its initial service connection.
     pub async fn new(connection: &Connection, service: &str) -> zbus::Result<Self> {
-        let proxy = DBusProxy::new(connection).await?;
-        let changes = proxy
+        let proxy = DBusProxy::builder(connection)
+            .cache_properties(CacheProperties::No)
+            .build()
+            .await?;
+        let owners = proxy
             .receive_name_owner_changed_with_args(&[(0, service)])
-            .await?
-            .map(|signal| signal.args().map(|_| ()))
-            .boxed();
+            .await?;
+        // Matching an optional signal is valid even on buses that never emit it.
+        let activations = proxy
+            .inner()
+            .receive_signal("ActivatableServicesChanged")
+            .await?;
 
-        Ok(Self { changes })
+        Ok(Self {
+            proxy,
+            owners,
+            activations,
+        })
     }
 
-    /// Waits for the next owner transition, or reports a closed bus stream.
-    pub async fn changed(&mut self) -> zbus::Result<()> {
-        self.changes
-            .next()
-            .await
-            .ok_or_else(|| Error::Failure("D-Bus service subscription closed".into()))?
+    async fn next(&mut self) -> zbus::Result<ServiceChange> {
+        tokio::select! {
+            _ = self.proxy.inner().connection().closed() => {
+                Err(std::io::Error::from(std::io::ErrorKind::NotConnected).into())
+            }
+            signal = self.owners.next() => {
+                let signal = signal.ok_or_else(|| Error::Failure("D-Bus ownership stream closed".into()))?;
+                let args = signal.args()?;
+
+                Ok(ServiceChange::Owner(args.new_owner().as_ref().map(|name| name.to_owned().into())))
+            }
+            signal = self.activations.next() => {
+                let signal = signal.ok_or_else(|| Error::Failure("D-Bus activation stream closed".into()))?;
+                signal.body().deserialize::<()>()?;
+
+                Ok(ServiceChange::Activation)
+            }
+        }
     }
 }
 
@@ -179,18 +189,59 @@ pub mod tests {
     static LOCK: Mutex<()> = Mutex::const_new(());
 
     #[test]
-    fn missing_services_and_denied_reads_have_different_results() {
-        let missing = zbus::Error::from(zbus::fdo::Error::ServiceUnknown("absent".into()));
-        let denied = zbus::Error::from(zbus::fdo::Error::AccessDenied("denied".into()));
+    fn classifies_wrapped_and_remote_service_errors_consistently() {
+        use zbus::DBusError;
 
-        assert_eq!(
-            availability_from_error(&missing),
-            Availability::Unavailable(UnavailableReason::ServiceMissing)
-        );
-        assert_eq!(
-            availability_from_error(&denied),
-            Availability::Failed(ProbeError::PermissionDenied)
-        );
+        let call = zbus::Message::method_call("/", "Probe")
+            .unwrap()
+            .build(&())
+            .unwrap();
+
+        for (error, expected) in [
+            (
+                FdoError::ServiceUnknown("absent".into()),
+                Availability::Unavailable(UnavailableReason::ServiceMissing),
+            ),
+            (
+                FdoError::NameHasNoOwner("absent".into()),
+                Availability::Unavailable(UnavailableReason::ServiceMissing),
+            ),
+            (
+                FdoError::AccessDenied("denied".into()),
+                Availability::Failed(ProbeError::PermissionDenied),
+            ),
+            (
+                FdoError::AuthFailed("denied".into()),
+                Availability::Failed(ProbeError::PermissionDenied),
+            ),
+            (
+                FdoError::UnknownObject("removed".into()),
+                Availability::Unavailable(UnavailableReason::DeviceMissing),
+            ),
+            (
+                FdoError::UnknownInterface("absent".into()),
+                Availability::Unavailable(UnavailableReason::DeviceMissing),
+            ),
+            (
+                FdoError::NoReply("timeout".into()),
+                Availability::Failed(ProbeError::Timeout),
+            ),
+            (
+                FdoError::Timeout("timeout".into()),
+                Availability::Failed(ProbeError::Timeout),
+            ),
+            (
+                FdoError::Failed("failure".into()),
+                Availability::Failed(ProbeError::Read),
+            ),
+        ] {
+            let reply = error.create_reply(&call.header()).unwrap();
+            let remote = Error::from(reply);
+            let wrapped = Error::from(error);
+
+            assert_eq!(availability_from_error(remote), expected);
+            assert_eq!(availability_from_error(wrapped), expected);
+        }
     }
 
     #[test]
@@ -213,7 +264,7 @@ pub mod tests {
                 Availability::Failed(ProbeError::PermissionDenied),
             ),
         ] {
-            assert_eq!(availability_from_error(&error), expected);
+            assert_eq!(availability_from_error(error), expected);
         }
     }
 

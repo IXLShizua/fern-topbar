@@ -2,12 +2,11 @@
 
 use super::{ATTENTION_HINT, Urgency};
 use crate::backend::dbus;
+use crate::features::availability::{Availability, AvailabilityPublisher, ProbeError};
 use futures_util::StreamExt;
 use snafu::Snafu;
 use std::collections::HashMap;
-use zbus::{
-    fdo::NameOwnerChangedStream, names::OwnedUniqueName, proxy::SignalStream, zvariant::OwnedValue,
-};
+use zbus::{names::OwnedUniqueName, proxy::SignalStream, zvariant::OwnedValue};
 
 const SERVICE: &str = "org.freedesktop.Notifications";
 
@@ -51,39 +50,40 @@ pub enum Error {
 /// IDs are valid only for this server owner; never replace an ID on a new owner.
 pub struct NotificationClient {
     proxy: NotificationsProxy<'static>,
+    service: dbus::Service,
     owner: OwnedUniqueName,
     closed: SignalStream<'static>,
-    owners: NameOwnerChangedStream,
 }
 
 impl NotificationClient {
     pub async fn connect() -> Result<Self, Error> {
-        dbus::probe(async {
-            let connection = dbus::session().await?;
-            let bus = zbus::fdo::DBusProxy::new(&connection).await?;
-            let owners = bus
-                .receive_name_owner_changed_with_args(&[(0, SERVICE)])
-                .await?;
-            let owner = bus.get_name_owner(SERVICE.try_into()?).await?;
-            let proxy = NotificationsProxy::builder(&connection)
-                .destination(owner.clone())?
-                .build()
-                .await?;
+        let availability = AvailabilityPublisher::default();
+        let mut service = dbus::Service::session(SERVICE, availability.clone());
+        let connection = service.connect().await;
+        let owner = service.owner().clone();
+        let (proxy, closed) = service
+            .run(dbus::probe(async {
+                let proxy = NotificationsProxy::builder(&connection)
+                    .destination(owner.clone())?
+                    .build()
+                    .await?;
+                let closed = proxy.inner().receive_signal("NotificationClosed").await?;
 
-            let closed = proxy.inner().receive_signal("NotificationClosed").await?;
+                Ok((proxy, closed))
+            }))
+            .await
+            .map_err(|state| {
+                tracing::debug!(?state, "cannot connect notification client");
 
-            Ok(Self {
-                proxy,
-                owner,
-                closed,
-                owners,
-            })
-        })
-        .await
-        .map_err(|state| {
-            tracing::debug!(?state, "cannot connect notification client");
+                Error::Connect
+            })?;
+        availability.set(Availability::Available);
 
-            Error::Connect
+        Ok(Self {
+            proxy,
+            service,
+            owner,
+            closed,
         })
     }
 
@@ -136,38 +136,26 @@ impl NotificationClient {
 
     /// Also wakes when the server or bus disappears, without polling a healthy session.
     pub async fn next_closed(&mut self) -> Result<u32, Error> {
-        loop {
-            tokio::select! {
-                biased;
-                changed = self.owners.next() => {
-                    let changed = changed.ok_or(Error::Read)?;
-                    let args = changed.args().map_err(|error| {
-                        tracing::warn!(%error, "invalid notification server ownership signal");
+        self.service
+            .run(async {
+                let signal = self
+                    .closed
+                    .next()
+                    .await
+                    .ok_or(Availability::Failed(ProbeError::Read))?;
+                let (id, _reason) = signal.body().deserialize::<(u32, u32)>().map_err(|error| {
+                    tracing::warn!(%error, "invalid NotificationClosed signal");
 
-                        Error::Read
-                    })?;
+                    Availability::Failed(ProbeError::Protocol)
+                })?;
 
-                    // Consume the signal atomically, without an await after removal
-                    // from the stream. Cancelling this read in select must not lose
-                    // an ownership transition while a lookup is still in flight.
-                    if args.old_owner().as_ref().is_some_and(|owner| owner.as_str() == self.owner.as_str()) {
-                        return Err(Error::Connect);
-                    }
-                }
-                signal = self.closed.next() => {
-                    let Some(signal) = signal else {
-                        return Err(Error::Read);
-                    };
-                    let (id, _reason) = signal.body().deserialize::<(u32, u32)>().map_err(|error| {
-                        tracing::warn!(%error, "invalid NotificationClosed signal");
-
-                        Error::Read
-                    })?;
-
-                    return Ok(id);
-                }
-            }
-        }
+                Ok(id)
+            })
+            .await
+            .map_err(|state| match state {
+                Availability::Failed(ProbeError::Read | ProbeError::Protocol) => Error::Read,
+                _ => Error::Connect,
+            })
     }
 }
 

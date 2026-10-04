@@ -1,7 +1,7 @@
 use crate::backend::reconnect::ReconnectBackoff;
 use crate::runtime::Task;
 use crate::{
-    backend::dbus::{self, ServiceChanges, probe},
+    backend::dbus::{Service, probe},
     features::availability::{Availability, AvailabilityPublisher, UnavailableReason},
 };
 use std::future::pending;
@@ -83,8 +83,41 @@ impl BrightnessDriver {
     }
 
     async fn run(mut self) {
+        let mut service = Service::system("org.freedesktop.login1", self.availability.clone());
+
+        loop {
+            let connection = tokio::select! {
+                connection = service.connect() => connection,
+                _ = self.events.closed() => return,
+                command = self.commands.recv() => {
+                    if command.is_none() {
+                        return;
+                    }
+
+                    continue;
+                }
+            };
+            let result = service
+                .run(async {
+                    probe(system::login_available(&connection)).await?;
+                    self.run_session(&connection).await
+                })
+                .await;
+
+            if result.is_ok() {
+                return;
+            }
+
+            self.device = None;
+            self.previous = None;
+            if self.events.send(None).is_err() {
+                return;
+            }
+        }
+    }
+
+    async fn run_session(&mut self, connection: &zbus::Connection) -> Result<(), Availability> {
         let mut events = None;
-        let mut owners = None;
         let mut retry = ReconnectBackoff::default();
 
         loop {
@@ -95,29 +128,20 @@ impl BrightnessDriver {
                 }
             }
 
-            if owners.is_none()
-                && let Ok(connection) = probe(dbus::system()).await
-            {
-                owners = probe(ServiceChanges::new(&connection, "org.freedesktop.login1"))
-                    .await
-                    .ok();
-            }
-
-            if !self.refresh().await {
-                return;
+            if !self.refresh() {
+                return Ok(());
             }
 
             let retrying =
-                events.is_none() || owners.is_none() || !self.availability.current().is_available();
-
+                events.is_none() || matches!(self.availability.current(), Availability::Failed(_));
             if !retrying {
                 retry.reset();
             }
 
             tokio::select! {
                 command = self.commands.recv() => match command {
-                    Some(command) => self.apply(command).await,
-                    None => return,
+                    Some(command) => self.apply(connection, command).await,
+                    None => return Ok(()),
                 },
                 event = async {
                     match events.as_ref() {
@@ -130,26 +154,14 @@ impl BrightnessDriver {
                         events = None;
                     }
                 }
-                changed = async {
-                    match owners.as_mut() {
-                        Some(owners) => owners.changed().await,
-                        None => pending().await,
-                    }
-                } => {
-                    if changed.is_err() {
-                        owners = None;
-                    }
-
-                    retry.reset();
-                }
-                _ = tokio::time::sleep(retry.next_delay()), if retrying => {}
-                _ = self.events.closed() => return,
+                _ = tokio::time::sleep(retry.next_delay()), if retrying => {},
+                _ = self.events.closed() => return Ok(()),
             }
         }
     }
 
-    async fn refresh(&mut self) -> bool {
-        let result = async {
+    fn refresh(&mut self) -> bool {
+        let result = (|| {
             self.device = system::BacklightDevice::discover()?;
 
             let Some(device) = &self.device else {
@@ -157,11 +169,8 @@ impl BrightnessDriver {
             };
             let current = device.read()?;
 
-            probe(system::login_available()).await?;
-
             Ok(current)
-        }
-        .await;
+        })();
 
         let current = match result {
             Ok(current) => {
@@ -185,7 +194,7 @@ impl BrightnessDriver {
         self.events.send(current).is_ok()
     }
 
-    async fn apply(&self, command: Command) {
+    async fn apply(&self, connection: &zbus::Connection, command: Command) {
         let Some(device) = self.device.as_ref() else {
             return;
         };
@@ -203,7 +212,7 @@ impl BrightnessDriver {
         }
         .clamp(1, 100);
 
-        let result = probe(device.set_percent(percent)).await;
+        let result = probe(device.set_percent(connection, percent)).await;
 
         if let Err(error) = result {
             tracing::warn!(state = ?error, "cannot set brightness");
@@ -213,7 +222,7 @@ impl BrightnessDriver {
 
 mod system {
     use super::{Availability, Brightness, UnavailableReason};
-    use crate::{backend::dbus, features::availability::ProbeError};
+    use crate::features::availability::ProbeError;
     use std::fs;
     use std::io;
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -232,9 +241,8 @@ mod system {
         fn id(&self) -> zbus::Result<String>;
     }
 
-    pub async fn login_available() -> zbus::Result<()> {
-        let connection = dbus::system().await?;
-        let session = LoginSessionProxy::builder(&connection)
+    pub async fn login_available(connection: &zbus::Connection) -> zbus::Result<()> {
+        let session = LoginSessionProxy::builder(connection)
             .cache_properties(zbus::proxy::CacheProperties::No)
             .build()
             .await?;
@@ -392,10 +400,13 @@ mod system {
             })
         }
 
-        pub async fn set_percent(&self, percent: u8) -> zbus::Result<()> {
+        pub async fn set_percent(
+            &self,
+            connection: &zbus::Connection,
+            percent: u8,
+        ) -> zbus::Result<()> {
             let value = u64::from(self.max) * u64::from(percent) / 100;
-            let connection = dbus::system().await?;
-            let session = LoginSessionProxy::new(&connection).await?;
+            let session = LoginSessionProxy::new(connection).await?;
 
             session
                 .set_brightness("backlight", &self.name, value.max(1) as u32)

@@ -2,10 +2,7 @@ use super::{
     Command, ConnectionKind, DeviceInfo, DeviceState, Password, Security, Snapshot, WifiNetwork,
     WifiProfile,
 };
-use futures_util::{
-    StreamExt,
-    stream::{BoxStream, select_all},
-};
+use futures_util::{Stream, StreamExt};
 use std::{collections::HashMap, time::Duration};
 use tokio::time::timeout;
 use zbus::{
@@ -77,51 +74,20 @@ impl Client {
         })
     }
 
-    pub async fn changes(&self) -> zbus::Result<BoxStream<'static, zbus::Result<()>>> {
-        // One namespace subscription also covers device/AP hotplug and property
-        // changes; separate generated DeviceAdded/DeviceRemoved streams are unnecessary.
-        let network = MatchRule::builder()
+    pub async fn changes(&self) -> zbus::Result<impl Stream<Item = zbus::Result<()>>> {
+        // One namespace subscription covers device/AP hotplug and property changes.
+        // Service ownership is observed by backend::dbus::Service.
+        let rule = MatchRule::builder()
             .msg_type(Type::Signal)
             .sender(SERVICE)?
             .path_namespace(ROOT)?
             .build();
 
-        let owner = MatchRule::builder()
-            .msg_type(Type::Signal)
-            .sender("org.freedesktop.DBus")?
-            .interface("org.freedesktop.DBus")?
-            .member("NameOwnerChanged")?
-            .add_arg(SERVICE)?
-            .build();
-
-        let mut streams = Vec::new();
-
-        for rule in [network, owner] {
-            streams.push(MessageStream::for_match_rule(rule, &self.connection, Some(128)).await?);
-        }
-
-        Ok(select_all(streams)
-            .map(|message| {
-                let message = message?;
-
-                if message
-                    .header()
-                    .interface()
-                    .is_some_and(|name| name.as_str() == "org.freedesktop.DBus")
-                {
-                    let (_, _, owner): (String, String, String) = message.body().deserialize()?;
-
-                    if owner.is_empty() {
-                        return Err(zbus::fdo::Error::NameHasNoOwner(
-                            "NetworkManager disconnected".into(),
-                        )
-                        .into());
-                    }
-                }
-
-                Ok(())
-            })
-            .boxed())
+        Ok(
+            MessageStream::for_match_rule(rule, &self.connection, Some(128))
+                .await?
+                .map(|message| message.map(|_| ())),
+        )
     }
 
     pub async fn snapshot(&self) -> zbus::Result<Snapshot> {
@@ -779,8 +745,7 @@ trait Ip6Config {
 mod tests {
     use super::super::{Backend, Event};
     use super::*;
-    use crate::backend::reconnect::ReconnectBackoff;
-    use crate::{backend::dbus::ServiceChanges, features::availability::AvailabilityPublisher};
+    use crate::features::availability::AvailabilityPublisher;
     use std::{
         collections::HashMap,
         sync::{
@@ -1209,7 +1174,6 @@ mod tests {
 
         let client = bus.connect().await;
 
-        let mut owners = ServiceChanges::new(&client, SERVICE).await.unwrap();
         let probe = client.clone();
         let client = Client::new(client).await.unwrap();
         let mut snapshot = client.snapshot().await.unwrap();
@@ -1307,15 +1271,19 @@ mod tests {
         let pending = backend.pending.clone();
         let (events, mut receiver) = tokio::sync::mpsc::unbounded_channel();
         let worker = tokio::spawn(async move {
-            Backend::listen(
-                &client,
-                &mut commands,
-                &events,
-                &pending,
-                &AvailabilityPublisher::default(),
-                &mut ReconnectBackoff::default(),
-            )
-            .await
+            let availability = AvailabilityPublisher::default();
+            let mut service = crate::backend::dbus::Service::system(SERVICE, availability.clone());
+            let _connection = service.connect().await;
+
+            service
+                .run(Backend::listen(
+                    &client,
+                    &mut commands,
+                    &events,
+                    &pending,
+                    &availability,
+                ))
+                .await
         });
 
         assert!(matches!(
@@ -1376,16 +1344,7 @@ mod tests {
 
         assert!(disconnected.is_err());
 
-        timeout(Duration::from_secs(3), owners.changed())
-            .await
-            .unwrap()
-            .unwrap();
-
         service.request_name(SERVICE).await.unwrap();
-        timeout(Duration::from_secs(3), owners.changed())
-            .await
-            .unwrap()
-            .unwrap();
 
         assert!(Client::new(probe).await.unwrap().snapshot().await.is_ok());
 

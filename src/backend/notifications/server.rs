@@ -79,9 +79,7 @@ enum Command {
 
 mod dbus {
     use super::{Availability, AvailabilityPublisher, Command, Event, Notification, Urgency};
-    use crate::backend::dbus::{
-        ServiceChanges, availability_from_error, probe, service_session, session,
-    };
+    use crate::backend::dbus::{Service as ServiceConnection, availability_from_error, probe};
     use crate::backend::notifications::ATTENTION_HINT;
     use std::collections::{HashMap, HashSet};
     use std::sync::atomic::{AtomicU32, Ordering};
@@ -89,21 +87,11 @@ mod dbus {
     use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
     use zbus::Connection;
     use zbus::fdo::{RequestNameFlags, RequestNameReply};
-    use zbus::names::BusName;
     use zbus::object_server::SignalEmitter;
     use zbus::zvariant::OwnedValue;
 
     const SERVICE_NAME: &str = "org.freedesktop.Notifications";
     const OBJECT_PATH: &str = "/org/freedesktop/Notifications";
-
-    #[zbus::proxy(
-        interface = "org.freedesktop.DBus",
-        default_service = "org.freedesktop.DBus",
-        default_path = "/org/freedesktop/DBus"
-    )]
-    trait SessionBus {
-        fn name_has_owner(&self, name: BusName<'_>) -> zbus::Result<bool>;
-    }
 
     #[derive(Clone)]
     struct Service {
@@ -213,63 +201,34 @@ mod dbus {
         };
 
         async move {
-            use crate::{
-                backend::reconnect::ReconnectBackoff, features::availability::Availability,
-            };
-
-            let mut retry = ReconnectBackoff::default();
+            let mut connection = ServiceConnection::exported(SERVICE_NAME, availability.clone());
 
             loop {
-                let mut owners = None;
-                let result = async {
-                    let connection = probe(session()).await?;
-
-                    owners = Some(probe(ServiceChanges::new(&connection, SERVICE_NAME)).await?);
-
-                    let driver = NotificationDriver::connect(service.clone()).await?;
-
-                    availability.set(Availability::Available);
-                    retry.reset();
-
-                    let result = driver.run(&mut commands, owners.as_mut().unwrap()).await;
-
-                    driver.close().await;
-
-                    result
-                }
-                .await;
-
-                match result {
-                    Ok(()) => return,
-                    Err(state) => availability.set(state),
-                }
-
-                let delay = tokio::time::sleep(retry.next_delay());
-
-                tokio::pin!(delay);
-
-                loop {
-                    tokio::select! {
-                        _ = service.events.closed() => return,
-                        _ = &mut delay => break,
-                        _ = async {
-                            match owners.as_mut() {
-                                Some(owners) => {
-                                    let _ = owners.changed().await;
-                                }
-                                None => std::future::pending().await,
-                            }
-                        } => {
-                            retry.reset();
-
-                            break;
+                let bus = tokio::select! {
+                    bus = connection.connect() => bus,
+                    _ = service.events.closed() => return,
+                    command = commands.recv() => {
+                        if command.is_none() {
+                            return;
                         }
-                        command = commands.recv() => {
-                            if command.is_none() {
-                                return;
-                            }
-                        }
+
+                        continue;
                     }
+                };
+                let result = connection
+                    .run(async {
+                        let driver = NotificationDriver::connect(service.clone(), bus).await?;
+                        availability.set(Availability::Available);
+
+                        let result = driver.run(&mut commands).await;
+                        driver.close().await;
+
+                        result
+                    })
+                    .await;
+
+                if result.is_ok() {
+                    return;
                 }
             }
         }
@@ -280,14 +239,8 @@ mod dbus {
     }
 
     impl NotificationDriver {
-        async fn connect(service: Service) -> Result<Self, Availability> {
+        async fn connect(service: Service, connection: Connection) -> Result<Self, Availability> {
             use crate::features::availability::{Availability, UnavailableReason};
-
-            let connection = probe(service_session()).await?;
-
-            if !probe(Self::name_available(&connection)).await? {
-                return Err(Availability::Unavailable(UnavailableReason::NameOccupied));
-            }
 
             probe(connection.object_server().at(OBJECT_PATH, service)).await?;
 
@@ -307,46 +260,15 @@ mod dbus {
             }
         }
 
-        async fn name_available(connection: &Connection) -> zbus::Result<bool> {
-            let bus = SessionBusProxy::new(connection).await?;
-            let name = BusName::try_from(SERVICE_NAME)?;
-
-            bus.name_has_owner(name).await.map(|owned| !owned)
-        }
-
-        async fn run(
-            &self,
-            commands: &mut UnboundedReceiver<Command>,
-            owners: &mut ServiceChanges,
-        ) -> Result<(), Availability> {
-            use crate::features::availability::{Availability, UnavailableReason};
-
-            loop {
-                tokio::select! {
-                    command = commands.recv() => {
-                        let Some(command) = command else {
-                            return Ok(());
-                        };
-
-                        if let Err(error) = self.emit(command).await {
-                            tracing::debug!(%error, "cannot emit notification signal");
-                            return Err(availability_from_error(&error));
-                        }
-                    }
-                    changed = owners.changed() => {
-                        changed.map_err(|error| availability_from_error(&error))?;
-
-                        let owner = probe(async {
-                            zbus::fdo::DBusProxy::new(&self.connection).await?
-                                .get_name_owner(SERVICE_NAME.try_into()?).await.map_err(zbus::Error::from)
-                        }).await?;
-
-                        if Some(owner.as_str()) != self.connection.unique_name().map(|name| name.as_str()) {
-                            return Err(Availability::Unavailable(UnavailableReason::NameOccupied));
-                        }
-                    }
+        async fn run(&self, commands: &mut UnboundedReceiver<Command>) -> Result<(), Availability> {
+            while let Some(command) = commands.recv().await {
+                if let Err(error) = self.emit(command).await {
+                    tracing::debug!(%error, "cannot emit notification signal");
+                    return Err(availability_from_error(error));
                 }
             }
+
+            Ok(())
         }
 
         async fn close(&self) {

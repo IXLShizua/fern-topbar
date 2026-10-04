@@ -1,4 +1,3 @@
-use crate::backend::reconnect::ReconnectBackoff;
 use crate::features::availability::{self, Availability, AvailabilityPublisher, UnavailableReason};
 mod dbus;
 mod model;
@@ -9,7 +8,7 @@ pub use model::{
 };
 
 use crate::{
-    backend::dbus::{ServiceChanges, availability_from_error, probe, system},
+    backend::dbus::{Service, availability_from_error, probe},
     runtime::Task,
 };
 use futures_util::{FutureExt, StreamExt};
@@ -116,72 +115,41 @@ impl Backend {
         pending: Arc<AtomicBool>,
         availability: AvailabilityPublisher,
     ) {
-        let mut retry = ReconnectBackoff::default();
+        let mut service = Service::system(dbus::SERVICE, availability.clone());
 
         loop {
-            let mut owners = None;
-            let result = async {
-                let connection = probe(system()).await?;
+            let connection = tokio::select! {
+                connection = service.connect() => connection,
+                _ = events.closed() => return,
+                command = commands.recv() => {
+                    if command.is_none() {
+                        return;
+                    }
 
-                owners = Some(probe(ServiceChanges::new(&connection, dbus::SERVICE)).await?);
+                    pending.store(false, Ordering::Release);
+                    let _ = events.send(Event::Busy(false));
+                    let _ = events.send(Event::Error("NetworkManager is unavailable".into()));
 
-                let client = probe(dbus::Client::new(connection)).await?;
+                    continue;
+                }
+            };
+            let result = service
+                .run(async {
+                    let client = probe(dbus::Client::new(connection)).await?;
 
-                Self::listen(
-                    &client,
-                    &mut commands,
-                    &events,
-                    &pending,
-                    &availability,
-                    &mut retry,
-                )
-                .await
-            }
-            .await;
+                    Self::listen(&client, &mut commands, &events, &pending, &availability).await
+                })
+                .await;
 
-            match result {
-                Ok(()) => return,
-                Err(state) => availability.set(state),
+            if result.is_ok() {
+                return;
             }
 
             while commands.try_recv().is_ok() {}
 
             pending.store(false, Ordering::Release);
-
             let _ = events.send(Event::Busy(false));
             let _ = events.send(Event::Updated(Snapshot::default()));
-            let delay = tokio::time::sleep(retry.next_delay());
-
-            tokio::pin!(delay);
-
-            loop {
-                tokio::select! {
-                    _ = events.closed() => return,
-                    _ = &mut delay => break,
-                    _ = async {
-                        match owners.as_mut() {
-                            Some(owners) => {
-                                let _ = owners.changed().await;
-                            }
-                            None => std::future::pending().await,
-                        }
-                    } => {
-                        retry.reset();
-
-                        break;
-                    }
-                    command = commands.recv() => {
-                        if command.is_none() {
-                            return;
-                        }
-
-                        pending.store(false, Ordering::Release);
-
-                        let _ = events.send(Event::Busy(false));
-                        let _ = events.send(Event::Error("NetworkManager is unavailable".into()));
-                    }
-                }
-            }
         }
     }
 
@@ -209,12 +177,10 @@ impl Backend {
         events: &mpsc::UnboundedSender<Event>,
         pending: &AtomicBool,
         availability: &AvailabilityPublisher,
-        retry: &mut ReconnectBackoff,
     ) -> Result<(), Availability> {
         let mut changes = probe(client.changes()).await?;
 
         Self::publish_snapshot(client, events, availability).await?;
-        retry.reset();
 
         let closed = || Availability::Failed(availability::ProbeError::Connect);
 
@@ -249,10 +215,10 @@ impl Backend {
                 }
                 _ = events.closed() => return Ok(()),
                 change = changes.next() => {
-                    change.ok_or_else(closed)?.map_err(|error| availability_from_error(&error))?;
+                    change.ok_or_else(closed)?.map_err(availability_from_error)?;
 
                     while let Some(change) = changes.next().now_or_never() {
-                        change.ok_or_else(closed)?.map_err(|error| availability_from_error(&error))?;
+                        change.ok_or_else(closed)?.map_err(availability_from_error)?;
                     }
 
                     Self::publish_snapshot(client, events, availability).await?;

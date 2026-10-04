@@ -1,9 +1,5 @@
-use crate::backend::reconnect::ReconnectBackoff;
-use crate::features::availability::{self, Availability, AvailabilityPublisher, UnavailableReason};
-use crate::{
-    backend::dbus::{ServiceChanges, availability_from_error, probe, system},
-    runtime::Task,
-};
+use crate::features::availability::AvailabilityPublisher;
+use crate::{backend::dbus::Service, runtime::Task};
 use tokio::sync::watch;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -93,57 +89,23 @@ impl BatteryDriver {
     }
 
     async fn run(self) {
-        let mut retry = ReconnectBackoff::default();
+        let mut service = Service::system("org.freedesktop.UPower", self.availability.clone());
 
-        while !self.events.is_closed() {
-            let mut owners = None;
-            let result = async {
-                let connection = probe(system()).await?;
+        loop {
+            let connection = tokio::select! {
+                connection = service.connect() => connection,
+                _ = self.events.closed() => return,
+            };
+            let result = tokio::select! {
+                result = service.run(dbus::run(&connection, &self.events, &self.availability)) => result,
+                _ = self.events.closed() => return,
+            };
 
-                owners =
-                    Some(probe(ServiceChanges::new(&connection, "org.freedesktop.UPower")).await?);
-
-                tokio::select! {
-                    result = dbus::run(&connection, &self.events, &self.availability) => result,
-                    changed = owners.as_mut().unwrap().changed() => {
-                        changed.map_err(|error| availability_from_error(&error))?;
-                        retry.reset();
-
-                        Err(Availability::Unavailable(UnavailableReason::ServiceMissing))
-                    }
-                    _ = self.events.closed() => Ok(false),
-                }
-            }
-            .await;
-
-            if self.availability.current().is_available() {
-                retry.reset();
-            }
-
-            match result {
-                Ok(false) => return,
-                Ok(true) => self
-                    .availability
-                    .set(Availability::Failed(availability::ProbeError::Connect)),
-                Err(state) => self.availability.set(state),
+            if result.is_ok() {
+                return;
             }
 
             publish(&self.events, None);
-
-            tokio::select! {
-                _ = self.events.closed() => return,
-                _ = tokio::time::sleep(retry.next_delay()) => {}
-                _ = async {
-                    match owners.as_mut() {
-                        Some(owners) => {
-                            let _ = owners.changed().await;
-                        }
-                        None => std::future::pending().await,
-                    }
-                } => {
-                    retry.reset();
-                }
-            }
         }
     }
 }
@@ -207,7 +169,7 @@ mod dbus {
         connection: &Connection,
         events: &watch::Sender<Option<Battery>>,
         availability: &AvailabilityPublisher,
-    ) -> Result<bool, Availability> {
+    ) -> Result<(), Availability> {
         let mut session = probe(BatterySession::connect(connection)).await?;
         session.run(events, availability).await
     }
@@ -247,7 +209,7 @@ mod dbus {
             &mut self,
             events: &watch::Sender<Option<Battery>>,
             availability: &AvailabilityPublisher,
-        ) -> Result<bool, Availability> {
+        ) -> Result<(), Availability> {
             let (percentage, energy_rate, state, present, warning, on_battery) =
                 tokio::time::timeout(PROBE_TIMEOUT, async {
                     (
@@ -284,11 +246,11 @@ mod dbus {
                 publish(events, battery);
 
                 if events.is_closed() {
-                    return Ok(false);
+                    return Ok(());
                 }
 
                 if changes.next().await.is_none() {
-                    return Ok(true);
+                    return Err(Availability::Failed(ProbeError::Connect));
                 }
             }
         }
@@ -342,7 +304,7 @@ mod dbus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::availability::tests::wait_for;
+    use crate::features::availability::{Availability, UnavailableReason, tests::wait_for};
     use std::sync::{
         Arc,
         atomic::{AtomicBool, AtomicU32, Ordering},
