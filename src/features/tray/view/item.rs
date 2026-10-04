@@ -9,7 +9,7 @@ use relm4::factory::{DynamicIndex, FactoryComponent, FactorySender, FactoryVecDe
 use relm4::gtk::prelude::*;
 use relm4::prelude::*;
 
-const TRAY_ICON_SIZE: i32 = 18;
+const TRAY_ICON_SIZE: i32 = 16;
 const OVERLAY_ICON_SIZE: i32 = 10;
 
 pub struct TrayItem {
