@@ -3,7 +3,7 @@
 use super::Input;
 use crate::{
     config::FeatureMode,
-    features::{EnabledFeature, FeatureId, MountedFeature, availability::Availability},
+    features::{FeatureId, MountedFeature, availability::Availability},
     runtime::Task,
     ui::core::FeatureDivider,
 };
@@ -24,7 +24,8 @@ pub struct FeatureSlot {
 
 impl FeatureSlot {
     pub fn new(
-        configured: EnabledFeature,
+        name: FeatureId,
+        mode: FeatureMode,
         feature: MountedFeature,
         mut updates: watch::Receiver<Availability>,
         input: relm4::Sender<Input>,
@@ -33,7 +34,6 @@ impl FeatureSlot {
         container.append(feature.widget());
         container.set_visible(false);
 
-        let name = configured.name;
         let visibility_input = input.clone();
 
         feature.widget().connect_visible_notify(move |_| {
@@ -56,7 +56,7 @@ impl FeatureSlot {
 
         Self {
             name,
-            mode: configured.mode,
+            mode,
             availability: Availability::Checking,
             container,
             divider: FeatureDivider::init(()),

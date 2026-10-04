@@ -12,7 +12,7 @@ use std::time::Duration;
 pub fn definition() -> FeatureDefinition {
     FeatureDefinition {
         available: |services| services.availability.subscribe(FeatureId::Clock),
-        mount,
+        mount: |context| Ok(mount(context)),
     }
 }
 

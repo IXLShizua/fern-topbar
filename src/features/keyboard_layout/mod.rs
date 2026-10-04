@@ -8,7 +8,7 @@ use relm4::{Component, ComponentController, Controller, gtk};
 pub fn definition() -> FeatureDefinition {
     FeatureDefinition {
         available: |services| services.availability.subscribe(FeatureId::KeyboardLayout),
-        mount,
+        mount: |context| Ok(mount(context)),
     }
 }
 
@@ -63,7 +63,8 @@ mod tests {
             .set_keyboard_layout(Some("English".into()));
 
         let mount = || {
-            let context = FeatureMountContext::new(&services, PopoverScope::default());
+            let context =
+                FeatureMountContext::new(&services, PopoverScope::default(), Default::default());
             let MountedFeature::KeyboardLayout(mounted) = super::mount(context) else {
                 panic!("expected the keyboard layout feature");
             };

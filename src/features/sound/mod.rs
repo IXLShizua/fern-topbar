@@ -3,7 +3,10 @@ mod control;
 mod model;
 
 use crate::{
-    features::{FeatureId, FeatureMountContext, MountedFeature, availability::FeatureAvailability},
+    features::{
+        FeatureId, FeatureMountContext, FeatureOptionsError, MountedFeature,
+        availability::FeatureAvailability,
+    },
     runtime::Task,
 };
 use relm4::{Component, ComponentController, Controller, gtk};
@@ -106,7 +109,8 @@ impl Mounted {
 pub(crate) fn mount_control(
     context: FeatureMountContext,
     spec: VolumeControlOptions,
-) -> MountedFeature {
+) -> Result<MountedFeature, FeatureOptionsError> {
+    let percentage = context.options.boolean("percentage", false)?;
     let audio_service = context.audio.clone();
     let VolumeSubscription {
         controls,
@@ -118,6 +122,7 @@ pub(crate) fn mount_control(
             spec,
             controls,
             popovers: context.popovers,
+            percentage,
         })
         .detach();
 
@@ -139,9 +144,9 @@ pub(crate) fn mount_control(
         }
     });
 
-    MountedFeature::Sound(Mounted {
+    Ok(MountedFeature::Sound(Mounted {
         controller,
         _forwarder: forwarder,
         _audio_service: audio_service,
-    })
+    }))
 }

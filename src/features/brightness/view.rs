@@ -14,11 +14,13 @@ pub struct Brightness {
     _popup: Option<PopupRegistration>,
     value: Option<backend::Brightness>,
     commands: backend::Controls,
+    percentage: bool,
 }
 
 pub struct BrightnessInit {
     pub popovers: PopoverScope,
     pub commands: backend::Controls,
+    pub percentage: bool,
 }
 
 #[derive(Debug)]
@@ -39,9 +41,9 @@ impl Component for Brightness {
         #[root]
         #[template]
         PanelMenuButton(MenuButtonStyle::Icon) {
+            set_class_active: ("topbar-labeled-button", model.percentage),
             #[watch]
             set_visible: model.value.is_some(),
-            set_icon_name: icon_names::BRIGHTNESS,
             set_tooltip_text: Some("Brightness · scroll to adjust"),
             add_controller = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL) {
                 connect_scroll[sender] => move |_, _, dy| {
@@ -52,6 +54,25 @@ impl Component for Brightness {
                     gtk::glib::Propagation::Stop
                 },
             },
+
+            #[wrap(Some)]
+            set_child = &gtk::Box {
+                set_spacing: 4,
+                set_halign: gtk::Align::Center,
+
+                gtk::Image {
+                    set_icon_name: Some(icon_names::BRIGHTNESS),
+                },
+
+                #[name = "percentage"]
+                gtk::Label {
+                    add_css_class: "topbar-percentage",
+                    set_visible: model.percentage,
+                    #[watch]
+                    set_label: &model.value.as_ref().map_or(String::new(), |value| format!("{}%", value.percent)),
+                },
+            },
+
             #[wrap(Some)]
             #[template]
             set_popover = &MenuPopover(PopoverStyle::Menu) {
@@ -83,11 +104,16 @@ impl Component for Brightness {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let BrightnessInit { commands, popovers } = init;
+        let BrightnessInit {
+            commands,
+            popovers,
+            percentage,
+        } = init;
         let mut model = Self {
             _popup: None,
             value: None,
             commands,
+            percentage,
         };
 
         let widgets = view_output!();
@@ -126,5 +152,81 @@ impl Component for Brightness {
         }
 
         self.update_view(widgets, sender);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[gtk::test]
+    fn percentage_follows_snapshots_and_slider_changes_with_optional_visibility() {
+        for percentage in [false, true] {
+            let (commands, mut received) = backend::tests::controls();
+            let component = Brightness::builder()
+                .launch(BrightnessInit {
+                    popovers: PopoverScope::default(),
+                    commands,
+                    percentage,
+                })
+                .detach();
+            let label = component
+                .widget()
+                .widget()
+                .child()
+                .unwrap()
+                .last_child()
+                .unwrap()
+                .downcast::<gtk::Label>()
+                .unwrap();
+            let context = gtk::glib::MainContext::default();
+            let send = |input| {
+                component.emit(input);
+
+                while context.pending() {
+                    context.iteration(false);
+                }
+            };
+
+            send(Input::Changed(Some(backend::Brightness {
+                percent: 73,
+                device: "test-backlight".into(),
+                max: 100,
+            })));
+
+            assert_eq!(label.label(), "73%");
+            assert_eq!(label.get_visible(), percentage);
+            assert_eq!(
+                component
+                    .widget()
+                    .widget()
+                    .has_css_class("topbar-labeled-button"),
+                percentage
+            );
+            assert!(received.try_recv().is_err());
+
+            send(Input::Slider(50));
+
+            assert_eq!(label.label(), "50%");
+            assert!(matches!(
+                received.try_recv(),
+                Ok(backend::Command::SetBrightness(50))
+            ));
+
+            send(Input::Changed(None));
+
+            assert!(!component.widget().widget().get_visible());
+            assert_eq!(label.label(), "");
+
+            send(Input::Changed(Some(backend::Brightness {
+                percent: 22,
+                device: "test-backlight".into(),
+                max: 100,
+            })));
+
+            assert!(component.widget().widget().get_visible());
+            assert_eq!(label.label(), "22%");
+            assert_eq!(label.get_visible(), percentage);
+        }
     }
 }

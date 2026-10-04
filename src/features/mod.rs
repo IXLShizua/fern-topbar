@@ -8,6 +8,7 @@ pub mod microphone;
 mod mounted;
 pub mod network;
 pub mod notifications;
+mod options;
 mod registry;
 mod sound;
 pub mod tray;
@@ -22,6 +23,7 @@ use crate::{
 pub(crate) use sound::AudioService;
 
 pub use mounted::MountedFeature;
+pub use options::{FeatureOptionsError, FeatureParameters};
 pub use registry::{EnabledFeature, EnabledFeatures, FeatureDefinition, FeatureId, resolve};
 
 /// Dependencies passed to features; each service is defined in its owning module.
@@ -37,6 +39,7 @@ pub struct FeatureServices {
 }
 
 pub struct FeatureMountContext {
+    pub options: FeatureParameters,
     pub availability: availability::FeatureAvailability,
     pub popovers: PopoverScope,
     pub audio: AudioService,
@@ -54,8 +57,13 @@ pub struct FeatureMountContext {
 }
 
 impl FeatureMountContext {
-    pub fn new(services: &FeatureServices, popovers: PopoverScope) -> Self {
+    pub fn new(
+        services: &FeatureServices,
+        popovers: PopoverScope,
+        options: FeatureParameters,
+    ) -> Self {
         Self {
+            options,
             availability: services.availability.clone(),
             popovers,
             audio: services.audio.clone(),

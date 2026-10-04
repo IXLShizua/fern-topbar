@@ -1,7 +1,9 @@
 mod backend;
 mod view;
 
-use super::{FeatureDefinition, FeatureId, FeatureMountContext, MountedFeature};
+use super::{
+    FeatureDefinition, FeatureId, FeatureMountContext, FeatureOptionsError, MountedFeature,
+};
 use crate::runtime::Task;
 use relm4::{Component, ComponentController, Controller, gtk};
 
@@ -28,7 +30,8 @@ impl Mounted {
     }
 }
 
-fn mount(context: FeatureMountContext) -> MountedFeature {
+fn mount(context: FeatureMountContext) -> Result<MountedFeature, FeatureOptionsError> {
+    let percentage = context.options.boolean("percentage", false)?;
     let mut backend =
         backend::Backend::start(context.availability.publisher(FeatureId::Brightness));
     let commands = backend.controls();
@@ -37,6 +40,7 @@ fn mount(context: FeatureMountContext) -> MountedFeature {
         .launch(view::BrightnessInit {
             commands,
             popovers: context.popovers,
+            percentage,
         })
         .detach();
 
@@ -50,9 +54,9 @@ fn mount(context: FeatureMountContext) -> MountedFeature {
         }
     });
 
-    MountedFeature::Brightness(Mounted {
+    Ok(MountedFeature::Brightness(Mounted {
         controller,
         _backend: backend,
         _forwarder: forwarder,
-    })
+    }))
 }

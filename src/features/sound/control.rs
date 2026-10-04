@@ -28,12 +28,14 @@ pub struct VolumeControl {
     sound: Option<Sound>,
     controls: backend::Controls,
     pending: Option<u8>,
+    percentage: bool,
 }
 
 pub struct VolumeControlInit {
     pub popovers: PopoverScope,
     pub spec: VolumeControlOptions,
     pub controls: backend::Controls,
+    pub percentage: bool,
 }
 
 #[derive(Debug)]
@@ -60,8 +62,6 @@ impl Component for VolumeControl {
             set_css_classes: &model.button_css_classes(),
             #[watch]
             set_visible: model.sound.is_some(),
-            #[watch]
-            set_icon_name: model.icon(),
             set_tooltip_text: Some(model.spec.button_tooltip),
             connect_active_notify[sender] => move |button| sender.input(Input::Popup(button.is_active())),
             add_controller = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL) {
@@ -71,6 +71,25 @@ impl Component for VolumeControl {
                     }
 
                     gtk::glib::Propagation::Stop
+                },
+            },
+
+            #[wrap(Some)]
+            set_child = &gtk::Box {
+                set_spacing: 4,
+                set_halign: gtk::Align::Center,
+
+                gtk::Image {
+                    #[watch]
+                    set_icon_name: Some(model.icon()),
+                },
+
+                #[name = "percentage"]
+                gtk::Label {
+                    add_css_class: "topbar-percentage",
+                    set_visible: model.percentage,
+                    #[watch]
+                    set_label: &model.sound.as_ref().map_or(String::new(), |sound| format!("{}%", sound.level)),
                 },
             },
 
@@ -127,6 +146,7 @@ impl Component for VolumeControl {
             spec,
             controls,
             popovers,
+            percentage,
         } = init;
 
         let mut model = Self {
@@ -135,6 +155,7 @@ impl Component for VolumeControl {
             sound: None,
             controls,
             pending: None,
+            percentage,
         };
 
         let widgets = view_output!();
@@ -214,6 +235,10 @@ impl VolumeControl {
     fn button_css_classes(&self) -> Vec<&'static str> {
         let mut classes = vec!["topbar-feature-button", self.spec.button_class];
 
+        if self.percentage {
+            classes.push("topbar-labeled-button");
+        }
+
         if self.is_muted() {
             classes.push("muted");
         }
@@ -253,6 +278,156 @@ mod tests {
         ui::icon_names,
     };
 
+    fn specification(device: AudioDevice) -> VolumeControlOptions {
+        VolumeControlOptions {
+            device,
+            default_icon: icon_names::SPEAKER_MAX,
+            button_tooltip: "Volume",
+            mute_tooltip: "Mute",
+            scale_tooltip: "Volume",
+            button_class: "topbar-audio-button",
+            menu_class: "topbar-audio-menu",
+            row_class: "topbar-audio-row",
+            icon: |_| icon_names::SPEAKER_MAX,
+        }
+    }
+
+    #[gtk::test]
+    fn volume_controls_center_content_and_render_enabled_percentages() {
+        relm4::adw::init().unwrap();
+        relm4::set_global_css(include_str!(concat!(env!("OUT_DIR"), "/styles.css")));
+
+        for (device, percentage) in [
+            (AudioDevice::Input, false),
+            (AudioDevice::Input, true),
+            (AudioDevice::Output, false),
+            (AudioDevice::Output, true),
+        ] {
+            let (controls, _) = controls();
+            let component = VolumeControl::builder()
+                .launch(VolumeControlInit {
+                    popovers: PopoverScope::default(),
+                    controls,
+                    percentage,
+                    spec: specification(device),
+                })
+                .detach();
+            let button = component.widget().widget();
+            let content = button.child().unwrap();
+            let icon = content.first_child().unwrap();
+            let label = content
+                .last_child()
+                .unwrap()
+                .downcast::<gtk::Label>()
+                .unwrap();
+            let window = gtk::Window::new();
+            window.set_decorated(false);
+            window.set_child(Some(button));
+            window.present();
+            let main_loop = gtk::glib::MainLoop::new(None, false);
+            let quit = main_loop.clone();
+            gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(100), move || {
+                quit.quit()
+            });
+            main_loop.run();
+
+            component.emit(Input::Sound(Some(Sound {
+                level: 53,
+                muted: false,
+            })));
+
+            let main_loop = gtk::glib::MainLoop::new(None, false);
+            let quit = main_loop.clone();
+            gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(100), move || {
+                quit.quit()
+            });
+            main_loop.run();
+
+            assert_eq!(label.label(), "53%");
+            assert_eq!(label.is_mapped(), percentage);
+
+            if percentage {
+                assert!(label.width() > 0);
+                assert!(label.height() > 0);
+                let snapshot = gtk::Snapshot::new();
+                content.snapshot_child(&label, &snapshot);
+                assert!(snapshot.to_node().is_some());
+            } else {
+                let bounds = icon.compute_bounds(button).unwrap();
+                assert!(
+                    (bounds.x() + bounds.width() / 2.0 - button.width() as f32 / 2.0).abs() <= 1.0
+                );
+            }
+
+            window.destroy();
+        }
+    }
+
+    #[gtk::test]
+    fn input_and_output_percentages_follow_updates_and_respect_visibility() {
+        for device in [AudioDevice::Input, AudioDevice::Output] {
+            for percentage in [false, true] {
+                let (controls, _) = controls();
+                let component = VolumeControl::builder()
+                    .launch(VolumeControlInit {
+                        popovers: PopoverScope::default(),
+                        controls,
+                        percentage,
+                        spec: specification(device),
+                    })
+                    .detach();
+                let label = component
+                    .widget()
+                    .widget()
+                    .child()
+                    .unwrap()
+                    .last_child()
+                    .unwrap()
+                    .downcast::<gtk::Label>()
+                    .unwrap();
+                let context = gtk::glib::MainContext::default();
+
+                for sound in [
+                    Some(Sound {
+                        level: 53,
+                        muted: false,
+                    }),
+                    Some(Sound {
+                        level: 0,
+                        muted: true,
+                    }),
+                    None,
+                    Some(Sound {
+                        level: 37,
+                        muted: false,
+                    }),
+                ] {
+                    let expected = sound
+                        .as_ref()
+                        .map_or(String::new(), |sound| format!("{}%", sound.level));
+                    let visible = sound.is_some();
+
+                    component.emit(Input::Sound(sound));
+
+                    while context.pending() {
+                        context.iteration(false);
+                    }
+
+                    assert_eq!(label.label(), expected);
+                    assert_eq!(label.get_visible(), percentage);
+                    assert_eq!(component.widget().widget().get_visible(), visible);
+                    assert_eq!(
+                        component
+                            .widget()
+                            .widget()
+                            .has_css_class("topbar-labeled-button"),
+                        percentage
+                    );
+                }
+            }
+        }
+    }
+
     #[gtk::test]
     fn optimistic_level_changes_update_effective_mute_without_latching_it() {
         let (controls, commands) = controls();
@@ -260,19 +435,19 @@ mod tests {
             .launch(VolumeControlInit {
                 popovers: PopoverScope::default(),
                 controls,
-                spec: VolumeControlOptions {
-                    device: AudioDevice::Output,
-                    default_icon: icon_names::SPEAKER_MAX,
-                    button_tooltip: "Volume",
-                    mute_tooltip: "Mute",
-                    scale_tooltip: "Volume",
-                    button_class: "topbar-audio-button",
-                    menu_class: "topbar-audio-menu",
-                    row_class: "topbar-audio-row",
-                    icon: |_| icon_names::SPEAKER_MAX,
-                },
+                percentage: true,
+                spec: specification(AudioDevice::Output),
             })
             .detach();
+        let label = component
+            .widget()
+            .widget()
+            .child()
+            .unwrap()
+            .last_child()
+            .unwrap()
+            .downcast::<gtk::Label>()
+            .unwrap();
 
         let context = gtk::glib::MainContext::default();
         let send = |input| {
@@ -291,6 +466,7 @@ mod tests {
         assert!(commands.try_recv().is_err());
 
         send(Input::SliderChanged(0));
+        assert_eq!(label.label(), "0%");
         assert!(component.widget().widget().has_css_class("muted"));
         assert!(matches!(
             commands.try_recv(),
@@ -304,6 +480,7 @@ mod tests {
         })));
         assert_eq!(component.model().sound.as_ref().unwrap().level, 0);
         assert_eq!(component.model().pending, Some(0));
+        assert_eq!(label.label(), "0%");
 
         send(Input::Sound(Some(Sound {
             level: 0,
@@ -312,6 +489,7 @@ mod tests {
         assert_eq!(component.model().pending, None);
 
         send(Input::SliderChanged(5));
+        assert_eq!(label.label(), "5%");
         assert!(!component.widget().widget().has_css_class("muted"));
         assert!(matches!(
             commands.try_recv(),
@@ -325,6 +503,7 @@ mod tests {
         assert!(component.widget().widget().has_css_class("muted"));
 
         send(Input::Scroll(5));
+        assert_eq!(label.label(), "10%");
         assert!(component.widget().widget().has_css_class("muted"));
         assert_eq!(component.model().sound.as_ref().unwrap().level, 10);
         assert!(matches!(

@@ -124,6 +124,10 @@ button.topbar-icon-button {
     background-color: rgba(255, 255, 255, 0.4);
 }
 
+.topbar-percentage {
+    font-variant-numeric: tabular-nums;
+}
+
 menubutton.topbar {
     &-feature-button {
         > button {

@@ -478,3 +478,15 @@ mod system {
         }
     }
 }
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    /// Records control messages without accessing a real backlight device.
+    pub fn controls() -> (Controls, UnboundedReceiver<Command>) {
+        let (commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+
+        (Controls { commands }, receiver)
+    }
+}

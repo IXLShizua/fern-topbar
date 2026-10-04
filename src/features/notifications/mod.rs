@@ -21,7 +21,7 @@ fn urgency_class(urgency: Urgency) -> &'static str {
 pub fn definition() -> FeatureDefinition {
     FeatureDefinition {
         available: |services| services.availability.subscribe(FeatureId::Notifications),
-        mount,
+        mount: |context| Ok(mount(context)),
     }
 }
 

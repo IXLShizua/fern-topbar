@@ -46,6 +46,7 @@ pub struct NetworkInit {
     pub popovers: PopoverScope,
     pub status: View,
     pub backend: Backend,
+    pub percentage: bool,
 }
 
 pub struct Network {
@@ -56,6 +57,7 @@ pub struct Network {
     selected: Option<WifiNetwork>,
     forget: Option<String>,
     password: Password,
+    percentage: bool,
 }
 
 #[relm4::component(pub)]
@@ -89,6 +91,15 @@ impl Component for Network {
                 gtk::Label {
                     #[watch]
                     set_label: &model.status.summary,
+                },
+
+                #[name = "percentage"]
+                gtk::Label {
+                    add_css_class: "topbar-percentage",
+                    #[watch]
+                    set_visible: model.percentage && model.status.signal.is_some(),
+                    #[watch]
+                    set_label: &model.status.signal.map_or(String::new(), |signal| format!("{signal}%")),
                 },
             },
 
@@ -411,6 +422,7 @@ impl Component for Network {
             selected: None,
             forget: None,
             password: Password(String::new()),
+            percentage: init.percentage,
         };
 
         model.rows.update(&model.status);
@@ -578,7 +590,7 @@ impl Network {
 
 #[cfg(test)]
 mod tests {
-    use super::super::backend::{Backend, Command, Event, Security, Snapshot};
+    use super::super::backend::{Backend, Command, ConnectionKind, Event, Security, Snapshot};
     use super::super::backend::{DeviceInfo, DeviceState, WifiProfile};
     use super::*;
 
@@ -591,6 +603,64 @@ mod tests {
             }
 
             context.iteration(false);
+        }
+    }
+
+    #[gtk::test]
+    fn percentage_tracks_active_wifi_and_hides_for_other_connections() {
+        for percentage in [false, true] {
+            let (backend, _) = Backend::test_channel();
+            let component = Network::builder()
+                .launch(NetworkInit {
+                    popovers: PopoverScope::default(),
+                    status: View::default(),
+                    backend,
+                    percentage,
+                })
+                .detach();
+            let mut status = Snapshot {
+                wifi_enabled: true,
+                wifi_available: true,
+                wifi_hardware_enabled: true,
+                connection_kind: Some(ConnectionKind::Wifi),
+                networks: vec![WifiNetwork {
+                    ssid: b"Test".to_vec(),
+                    name: "Test".into(),
+                    security: Security::Open,
+                    strength: 73,
+                    device: "/wifi".into(),
+                    access_point: "/ap".into(),
+                    active: true,
+                    profile: None,
+                }],
+                ..Snapshot::default()
+            };
+
+            for strength in [73, 0, 22] {
+                status.networks[0].strength = strength;
+                component.emit(Input::BackendEvent(Event::Updated(status.clone())));
+                settle();
+
+                assert_eq!(
+                    component.widgets().percentage.label(),
+                    format!("{strength}%")
+                );
+                assert_eq!(component.widgets().percentage.get_visible(), percentage);
+            }
+
+            for kind in [
+                Some(ConnectionKind::Ethernet),
+                None,
+                Some(ConnectionKind::Wifi),
+            ] {
+                status.connection_kind = kind;
+                status.networks[0].active = kind != Some(ConnectionKind::Wifi);
+                component.emit(Input::BackendEvent(Event::Updated(status.clone())));
+                settle();
+
+                assert!(!component.widgets().percentage.get_visible());
+                assert_eq!(component.widgets().percentage.label(), "");
+            }
         }
     }
 
@@ -618,6 +688,7 @@ mod tests {
 
         let component = Network::builder()
             .launch(NetworkInit {
+                percentage: false,
                 popovers: PopoverScope::default(),
                 status,
                 backend,
@@ -679,6 +750,7 @@ mod tests {
         let (backend, _commands) = Backend::test_channel();
         let component = Network::builder()
             .launch(NetworkInit {
+                percentage: false,
                 popovers: PopoverScope::default(),
                 status: View::default(),
                 backend,
@@ -770,6 +842,7 @@ mod tests {
 
         let component = Network::builder()
             .launch(NetworkInit {
+                percentage: false,
                 popovers: PopoverScope::default(),
                 status: View::from_status(snapshot, None, true),
                 backend,
@@ -934,6 +1007,7 @@ mod tests {
         let (backend, _commands) = Backend::test_channel();
         let component = Network::builder()
             .launch(NetworkInit {
+                percentage: false,
                 popovers: PopoverScope::default(),
                 status: View::from_status(Snapshot::default(), None, true),
                 backend,
@@ -955,6 +1029,7 @@ mod tests {
         let (backend, mut commands) = Backend::test_channel();
         let component = Network::builder()
             .launch(NetworkInit {
+                percentage: false,
                 popovers: PopoverScope::default(),
                 status: View::default(),
                 backend,

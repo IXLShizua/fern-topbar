@@ -68,13 +68,27 @@ impl Component for PanelContent {
             let mut mounted = Vec::with_capacity(features.len());
 
             for feature in features {
-                let context = FeatureMountContext::new(&services, popovers.clone());
+                let EnabledFeature {
+                    name,
+                    mode,
+                    options,
+                    definition,
+                } = feature;
+                let context = FeatureMountContext::new(&services, popovers.clone(), options);
 
-                let updates = (feature.definition.available)(&services);
-                let component = (feature.definition.mount)(context);
+                let updates = (definition.available)(&services);
+                let component = match (definition.mount)(context) {
+                    Ok(component) => component,
+                    Err(error) => {
+                        tracing::error!(feature = name.as_str(), %error, "invalid feature options");
+
+                        continue;
+                    }
+                };
 
                 mounted.push(FeatureSlot::new(
-                    feature,
+                    name,
+                    mode,
                     component,
                     updates,
                     sender.input_sender().clone(),
@@ -125,6 +139,8 @@ mod tests {
         config::{Auto, FeatureMode, FeatureOptions, Features},
         features,
     };
+    use serde_json::Value;
+    use std::collections::HashMap;
 
     fn children(widget: &gtk::Widget) -> Vec<gtk::Widget> {
         let mut children = Vec::new();
@@ -139,25 +155,60 @@ mod tests {
     }
 
     #[gtk::test]
+    fn invalid_options_skip_only_the_affected_feature() {
+        let config = Features {
+            start: vec![
+                FeatureOptions {
+                    name: FeatureId::Brightness,
+                    mode: FeatureMode::Switch(true),
+                    options: HashMap::from([("percentage".into(), Value::String("true".into()))]),
+                },
+                FeatureOptions {
+                    name: FeatureId::Clock,
+                    mode: FeatureMode::Switch(true),
+                    options: HashMap::new(),
+                },
+            ],
+            center: Vec::new(),
+            end: Vec::new(),
+        };
+        let content = PanelContent::builder()
+            .launch(PanelContentInit {
+                features: features::resolve(config),
+                services: FeatureServices::default(),
+                popovers: PopoverScope::default(),
+            })
+            .detach();
+        let slots = children(content.model().start.widget().upcast_ref());
+
+        assert_eq!(slots.len(), 1);
+        assert!(slots[0].first_child().unwrap().has_css_class("topbar-time"));
+    }
+
+    #[gtk::test]
     fn configured_groups_mount_components_in_order_with_dividers() {
         let config = Features {
             start: vec![
                 FeatureOptions {
                     name: FeatureId::KeyboardLayout,
                     mode: FeatureMode::Switch(true),
+                    options: Default::default(),
                 },
                 FeatureOptions {
                     name: FeatureId::Network,
                     mode: FeatureMode::Switch(false),
+                    options: Default::default(),
                 },
                 FeatureOptions {
                     name: FeatureId::Clock,
                     mode: FeatureMode::Switch(true),
+                    options: Default::default(),
                 },
             ],
             center: vec![FeatureOptions {
                 name: FeatureId::Workspaces,
                 mode: FeatureMode::Switch(true),
+                options: Default::default(),
             }],
             end: Vec::new(),
         };
@@ -234,14 +285,17 @@ mod tests {
                 FeatureOptions {
                     name: FeatureId::Clock,
                     mode: FeatureMode::Switch(true),
+                    options: Default::default(),
                 },
                 FeatureOptions {
                     name: FeatureId::KeyboardLayout,
                     mode: FeatureMode::Auto(Auto::Auto),
+                    options: Default::default(),
                 },
                 FeatureOptions {
                     name: FeatureId::Workspaces,
                     mode: FeatureMode::Switch(true),
+                    options: Default::default(),
                 },
             ],
             center: Vec::new(),

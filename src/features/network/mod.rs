@@ -1,7 +1,9 @@
 mod backend;
 mod view;
 
-use super::{FeatureDefinition, FeatureId, FeatureMountContext, MountedFeature};
+use super::{
+    FeatureDefinition, FeatureId, FeatureMountContext, FeatureOptionsError, MountedFeature,
+};
 use crate::runtime::Task;
 use backend::Backend;
 use relm4::{Component, ComponentController, Controller, gtk};
@@ -27,7 +29,8 @@ impl Mounted {
     }
 }
 
-fn mount(context: FeatureMountContext) -> MountedFeature {
+fn mount(context: FeatureMountContext) -> Result<MountedFeature, FeatureOptionsError> {
+    let percentage = context.options.boolean("percentage", false)?;
     let (backend, mut receiver) =
         Backend::start(context.availability.publisher(FeatureId::Network));
     let component = view::Network::builder()
@@ -35,6 +38,7 @@ fn mount(context: FeatureMountContext) -> MountedFeature {
             popovers: context.popovers,
             status: view::View::default(),
             backend,
+            percentage,
         })
         .detach();
 
@@ -47,8 +51,8 @@ fn mount(context: FeatureMountContext) -> MountedFeature {
         }
     });
 
-    MountedFeature::Network(Mounted {
+    Ok(MountedFeature::Network(Mounted {
         controller: component,
         _forwarder: forwarder,
-    })
+    }))
 }

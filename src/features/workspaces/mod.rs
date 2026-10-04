@@ -9,7 +9,7 @@ use relm4::{Component, ComponentController, Controller, gtk};
 pub fn definition() -> FeatureDefinition {
     FeatureDefinition {
         available: |services| services.availability.subscribe(FeatureId::Workspaces),
-        mount,
+        mount: |context| Ok(mount(context)),
     }
 }
 
@@ -155,7 +155,8 @@ mod tests {
         };
 
         let mount = || {
-            let context = FeatureMountContext::new(&services, PopoverScope::default());
+            let context =
+                FeatureMountContext::new(&services, PopoverScope::default(), Default::default());
             let MountedFeature::Workspaces(mounted) = super::mount(context) else {
                 panic!("expected the workspaces feature");
             };

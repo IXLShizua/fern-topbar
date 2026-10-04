@@ -6,6 +6,7 @@ pub struct View {
     pub visible: bool,
     pub icon: &'static str,
     pub summary: String,
+    pub signal: Option<u8>,
     pub tooltip: String,
     pub wifi_enabled: bool,
     pub wifi_available: bool,
@@ -82,10 +83,20 @@ impl View {
             format!("Connected: {}", status.connection_name)
         };
 
+        let signal = match status.connection_kind {
+            Some(ConnectionKind::Wifi) if wifi_enabled => status
+                .networks
+                .iter()
+                .find(|network| network.active)
+                .map(|network| network.strength),
+            _ => None,
+        };
+
         Self {
             visible,
             icon,
             summary: label.into(),
+            signal,
             tooltip,
             wifi_enabled,
             wifi_available: status.wifi_available,

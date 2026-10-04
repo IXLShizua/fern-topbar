@@ -17,11 +17,17 @@
     "end": [
       {
         "name": "audio",
-        "mode": true
+        "mode": true,
+        "options": {
+          "percentage": false
+        }
       },
       {
         "name": "microphone",
-        "mode": true
+        "mode": true,
+        "options": {
+          "percentage": false
+        }
       },
       {
         "name": "keyboard_layout",
@@ -29,7 +35,10 @@
       },
       {
         "name": "brightness",
-        "mode": "auto"
+        "mode": "auto",
+        "options": {
+          "percentage": false
+        }
       },
       {
         "name": "tray",
@@ -37,11 +46,17 @@
       },
       {
         "name": "network",
-        "mode": "auto"
+        "mode": "auto",
+        "options": {
+          "percentage": false
+        }
       },
       {
         "name": "battery",
-        "mode": "auto"
+        "mode": "auto",
+        "options": {
+          "percentage": false
+        }
       },
       {
         "name": "notifications",

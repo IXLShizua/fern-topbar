@@ -9,7 +9,7 @@ use relm4::{Component, ComponentController, Controller, gtk};
 pub fn definition() -> FeatureDefinition {
     FeatureDefinition {
         available: |services| services.availability.subscribe(FeatureId::Tray),
-        mount,
+        mount: |context| Ok(mount(context)),
     }
 }
 

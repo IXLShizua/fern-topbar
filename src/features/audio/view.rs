@@ -1,5 +1,5 @@
 use crate::{
-    features::{FeatureMountContext, MountedFeature, sound},
+    features::{FeatureMountContext, FeatureOptionsError, MountedFeature, sound},
     ui::icon_names,
 };
 use sound::{AudioDevice, Volume, VolumeControlOptions};
@@ -16,7 +16,7 @@ const CONTROL: VolumeControlOptions = VolumeControlOptions {
     icon: output_icon,
 };
 
-pub fn mount(context: FeatureMountContext) -> MountedFeature {
+pub fn mount(context: FeatureMountContext) -> Result<MountedFeature, FeatureOptionsError> {
     sound::mount_control(context, CONTROL)
 }
 

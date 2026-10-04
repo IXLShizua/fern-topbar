@@ -1,9 +1,9 @@
 //! Typed feature definitions and resolution of the configured groups.
 
 use super::{
-    FeatureMountContext, FeatureServices, MountedFeature, audio, availability::Availability,
-    battery, brightness, clock, keyboard_layout, microphone, network, notifications, tray,
-    workspaces,
+    FeatureMountContext, FeatureOptionsError, FeatureParameters, FeatureServices, MountedFeature,
+    audio, availability::Availability, battery, brightness, clock, keyboard_layout, microphone,
+    network, notifications, tray, workspaces,
 };
 use crate::config::{FeatureMode, FeatureOptions, Features};
 use serde::Deserialize;
@@ -102,13 +102,13 @@ const FEATURE_REGISTRY: &[FeatureRegistration] = &[
     },
 ];
 
-/// Creates the UI owner; backend failures are reported through `Availability`.
-pub type Mount = fn(FeatureMountContext) -> MountedFeature;
+/// Invalid options prevent mounting; backend failures are reported through `Availability`.
+pub type Mount = fn(FeatureMountContext) -> Result<MountedFeature, FeatureOptionsError>;
 
 /// A feature's readiness subscription and UI constructor.
 ///
-/// Mounting is infallible: the UI and its backend owner exist while services are
-/// missing, so readiness transitions can reveal the same component after recovery.
+/// Valid options create a UI/backend owner even while services are missing, so
+/// readiness transitions can reveal the same component after recovery.
 pub struct FeatureDefinition {
     pub available: fn(&FeatureServices) -> tokio::sync::watch::Receiver<Availability>,
     pub mount: Mount,
@@ -118,6 +118,7 @@ pub struct FeatureDefinition {
 pub struct EnabledFeature {
     pub name: FeatureId,
     pub mode: FeatureMode,
+    pub options: FeatureParameters,
     pub definition: FeatureDefinition,
 }
 
@@ -150,6 +151,7 @@ fn resolve_feature(options: FeatureOptions) -> Option<EnabledFeature> {
     Some(EnabledFeature {
         name: options.name,
         mode: options.mode,
+        options: options.options.into(),
         definition,
     })
 }
@@ -157,7 +159,75 @@ fn resolve_feature(options: FeatureOptions) -> Option<EnabledFeature> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::core::PopoverScope;
     use crate::{config::Auto, features::availability::UnavailableReason};
+    use serde_json::Value;
+    use std::collections::HashMap;
+
+    #[test]
+    fn invalid_percentage_is_rejected_before_starting_feature_resources() {
+        let services = FeatureServices::default();
+
+        for name in [
+            FeatureId::Audio,
+            FeatureId::Microphone,
+            FeatureId::Brightness,
+            FeatureId::Battery,
+            FeatureId::Network,
+        ] {
+            let feature = resolve_feature(FeatureOptions {
+                name,
+                mode: FeatureMode::Switch(true),
+                options: HashMap::from([("percentage".into(), Value::String("true".into()))]),
+            })
+            .unwrap();
+            let context =
+                FeatureMountContext::new(&services, PopoverScope::default(), feature.options);
+
+            assert!(matches!(
+                (feature.definition.mount)(context),
+                Err(FeatureOptionsError::InvalidType { name, .. }) if name == "percentage"
+            ));
+        }
+    }
+
+    #[test]
+    fn resolution_passes_each_features_parameters_to_its_mount_context() {
+        let config = Features {
+            end: [(FeatureId::Audio, true), (FeatureId::Microphone, false)]
+                .into_iter()
+                .map(|(name, value)| FeatureOptions {
+                    name,
+                    mode: FeatureMode::Switch(true),
+                    options: HashMap::from([
+                        ("percentage".into(), Value::Bool(value)),
+                        ("other_parameter".into(), Value::Bool(!value)),
+                    ]),
+                })
+                .collect(),
+            start: Vec::new(),
+            center: Vec::new(),
+        };
+        let services = FeatureServices::default();
+
+        for feature in resolve(config).end {
+            let expected = feature.name == FeatureId::Audio;
+            let context =
+                FeatureMountContext::new(&services, PopoverScope::default(), feature.options);
+
+            assert_eq!(
+                context.options.boolean("percentage", !expected).unwrap(),
+                expected
+            );
+            assert_eq!(
+                context
+                    .options
+                    .boolean("other_parameter", expected)
+                    .unwrap(),
+                !expected
+            );
+        }
+    }
 
     #[test]
     fn registered_definitions_observe_their_own_readiness() {
@@ -167,6 +237,7 @@ mod tests {
             let feature = resolve_feature(FeatureOptions {
                 name,
                 mode: FeatureMode::Switch(true),
+                options: Default::default(),
             })
             .unwrap();
 
@@ -190,28 +261,34 @@ mod tests {
                 FeatureOptions {
                     name: FeatureId::KeyboardLayout,
                     mode: FeatureMode::Switch(true),
+                    options: Default::default(),
                 },
                 FeatureOptions {
                     name: FeatureId::Network,
                     mode: FeatureMode::Switch(false),
+                    options: Default::default(),
                 },
                 FeatureOptions {
                     name: FeatureId::Clock,
                     mode: FeatureMode::Auto(Auto::Auto),
+                    options: Default::default(),
                 },
             ],
             center: vec![FeatureOptions {
                 name: FeatureId::Workspaces,
                 mode: FeatureMode::Switch(true),
+                options: Default::default(),
             }],
             end: vec![
                 FeatureOptions {
                     name: FeatureId::Audio,
                     mode: FeatureMode::Switch(true),
+                    options: Default::default(),
                 },
                 FeatureOptions {
                     name: FeatureId::Microphone,
                     mode: FeatureMode::Switch(false),
+                    options: Default::default(),
                 },
             ],
         };
@@ -241,14 +318,17 @@ mod tests {
                 FeatureOptions {
                     name: FeatureId::Battery,
                     mode: FeatureMode::Auto(Auto::Auto),
+                    options: Default::default(),
                 },
                 FeatureOptions {
                     name: FeatureId::Notifications,
                     mode: FeatureMode::Switch(true),
+                    options: Default::default(),
                 },
                 FeatureOptions {
                     name: FeatureId::Network,
                     mode: FeatureMode::Switch(false),
+                    options: Default::default(),
                 },
             ],
         };

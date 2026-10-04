@@ -1,6 +1,6 @@
 use crate::{features::FeatureId, ui::core::UiScale};
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -32,12 +32,14 @@ pub struct Features {
     pub end: Vec<FeatureOptions>,
 }
 
-/// One named feature with its explicit startup mode.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+/// One named feature; its options are interpreted by the owning feature.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FeatureOptions {
     pub name: FeatureId,
     pub mode: FeatureMode,
+    #[serde(default)]
+    pub options: HashMap<String, serde_json::Value>,
 }
 
 impl Features {
@@ -113,7 +115,11 @@ impl Default for Features {
     fn default() -> Self {
         let enabled = FeatureMode::Switch(true);
         let auto = FeatureMode::Auto(Auto::Auto);
-        let option = |name, mode| FeatureOptions { name, mode };
+        let option = |name, mode| FeatureOptions {
+            name,
+            mode,
+            options: HashMap::new(),
+        };
 
         Self {
             start: vec![option(FeatureId::Workspaces, enabled)],
@@ -248,16 +254,18 @@ mod tests {
         let enabled = FeatureOptions {
             name: FeatureId::Clock,
             mode: FeatureMode::Switch(true),
+            options: Default::default(),
         };
 
         let disabled = FeatureOptions {
             name: FeatureId::Clock,
             mode: FeatureMode::Switch(false),
+            options: Default::default(),
         };
 
         for features in [
             Features {
-                start: vec![enabled, disabled],
+                start: vec![enabled.clone(), disabled.clone()],
                 center: Vec::new(),
                 end: Vec::new(),
             },
